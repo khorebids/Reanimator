@@ -25,7 +25,7 @@ public partial class PsdLayerPreviewRenderer
             EditorPrefs.SetBool("VerifySavingAssets", false);
             var importer = AssetImporter.GetAtPath(assetPath);
             if (importer == null)
-                return;
+                throw new System.InvalidOperationException("Asset importer disappeared before saving: " + assetPath);
 
             EditorUtility.SetDirty(importer);
             AssetDatabase.WriteImportSettingsIfDirty(assetPath);

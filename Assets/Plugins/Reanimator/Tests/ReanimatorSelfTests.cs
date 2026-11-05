@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -99,10 +99,73 @@ internal static partial class ReanimatorSelfTests
             EditorApplication.Exit(0);
     }
 
+    private static void AutoSkeletonScopesOutputsAndDetectsErrors()
+    {
+        const string graphJson = @"{""4"":{""class_type"":""SavePoseKpsAsJsonFile"",""inputs"":{""filename_prefix"":""shared""}}}";
+        var graph = Newtonsoft.Json.Linq.JObject.Parse(graphJson);
+        var client = AppDomain.CurrentDomain.GetAssemblies()
+            .Select(assembly => assembly.GetType("ComfimatorComfyClient"))
+            .First(type => type != null);
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+        var scope = client.GetMethod("ScopeAutoSkeletonKeypoints", flags);
+        var completed = client.GetMethod("GetCompletedAutoSkeletonOutputs", flags);
+        var first = (string)scope.Invoke(null, new object[] { graph });
+        var second = (string)scope.Invoke(null, new object[] { graph });
+        AssertTrue(first != second && (string)graph["4"]["inputs"]["filename_prefix"] == second,
+            "Concurrent prompts must use distinct keypoint prefixes.");
+
+        const string foreign = @"{""foreign"":{""status"":{""completed"":true},""outputs"":{""4"":{}}}}";
+        AssertTrue(((Newtonsoft.Json.Linq.JObject)completed.Invoke(null, new object[] { foreign, "own" })) == null,
+            "Completed output for a different prompt must not be consumed.");
+        const string complete = @"{""own"":{""status"":{""completed"":true},""outputs"":{""4"":{}}}}";
+        AssertTrue(((Newtonsoft.Json.Linq.JObject)completed.Invoke(null, new object[] { complete, "own" }))?["4"] != null,
+            "Only the requested completed prompt can supply output.");
+
+        const string failed = @"{""own"":{""status"":{""completed"":false,""status_str"":""error"",""messages"":[""missing model""]}}}";
+        try
+        {
+            completed.Invoke(null, new object[] { failed, "own" });
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException?.Message.Contains("missing model") == true)
+        {
+            return;
+        }
+        throw new InvalidOperationException("Comfy failure must report the server's cause immediately.");
+    }
+
+    private static void ApplyRestoresPersistedImporterMetadata()
+    {
+        const string source = "Assets/Plugins/Reanimator/Graphics/icons.psd";
+        var copy = "Assets/__ReanimatorRollback_" + Guid.NewGuid().ToString("N") + ".psd";
+        AssertTrue(AssetDatabase.CopyAsset(source, copy), "Could not copy the PSD rollback fixture.");
+        try
+        {
+            var original = File.ReadAllBytes(copy + ".meta");
+            var importer = AssetImporter.GetAtPath(copy);
+            AssertTrue(importer != null, "PSD fixture must have an importer.");
+            var initialUserData = importer.userData;
+            importer.userData = "Reanimator rollback regression";
+            EditorUtility.SetDirty(importer);
+            AssetDatabase.WriteImportSettingsIfDirty(copy);
+            AssertFalse(original.SequenceEqual(File.ReadAllBytes(copy + ".meta")), "Fixture must persist a metadata change.");
+
+            PsdLayerPreviewRenderer.RestoreApplyImporterMetadata(copy, original);
+
+            AssertTrue(original.SequenceEqual(File.ReadAllBytes(copy + ".meta")), "Rollback must restore the original metadata bytes.");
+            AssertTrue(AssetImporter.GetAtPath(copy).userData == initialUserData, "Retry must see the restored importer state.");
+        }
+        finally
+        {
+            AssetDatabase.DeleteAsset(copy);
+        }
+    }
+
     private static List<Case> BuildCases()
     {
         return new List<Case>
         {
+            new Case("Auto Skeleton scopes outputs and detects Comfy errors", AutoSkeletonScopesOutputsAndDetectsErrors),
+            new Case("Apply restores persisted PSD importer metadata", ApplyRestoresPersistedImporterMetadata),
             new Case("VolumeCurve state is serializable and editable", VolumeCurveStateIsSerializableAndEditable),
             new Case("VolumeCurve selection and deletion stays clamped", VolumeCurveSelectionAndDeletionStaysClamped),
             new Case("VolumeCurve algorithms evaluate segment types", VolumeCurveAlgorithmsEvaluateSegmentTypes),

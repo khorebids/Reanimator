@@ -21,6 +21,7 @@ The source project uses **Unity 6.3 LTS (6000.3.14f1)** with the following packa
 | 2D Animation | `com.unity.2d.animation` | 13.0.5 |
 | 2D PSD Importer | `com.unity.2d.psdimporter` | 12.0.2 |
 | 2D Sprite | `com.unity.2d.sprite` | 1.0.0 |
+| Newtonsoft Json | `com.unity.nuget.newtonsoft-json` | 3.0.2 |
 
 1. Install or enable those packages in Unity's **Package Manager**.
 2. Clone or download this repository. Copy [`Assets/Plugins/Reanimator`](Assets/Plugins/Reanimator) and its sibling [`Reanimator.meta`](Assets/Plugins/Reanimator.meta) into your project's `Assets/Plugins/`. Keep the folder at that path because the editor loads some resources from it directly.

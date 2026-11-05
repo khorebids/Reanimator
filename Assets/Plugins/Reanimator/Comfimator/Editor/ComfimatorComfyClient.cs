@@ -7,6 +7,8 @@ using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 internal static class ComfimatorComfyClient
@@ -15,8 +17,6 @@ internal static class ComfimatorComfyClient
     public const string AutoSkeletonEchoWorkflowPath = @"C:\Comfy\user\default\workflows\reanimator\auto_skeleton_echo_api.json";
     public const string AutoSkeletonControlNetPoseWorkflowPath = @"C:\Comfy\user\default\workflows\reanimator\auto_skeleton_controlnet_pose_api.json";
     private const string DefaultOutputDirectory = @"C:\Comfy\output";
-    private const string AutoSkeletonPoseImagePrefix = "reanimator_auto_skeleton_controlnet_pose";
-    private const string AutoSkeletonKeypointsPrefix = "reanimator_auto_skeleton_keypoints";
     private const string InputToken = "__REANIMATOR_INPUT__";
     private const string NippleVisionModel = "Qwen3-VL-4B-Instruct-Abliterated";
     private const string NippleVisionPrompt =
@@ -145,9 +145,10 @@ internal static class ComfimatorComfyClient
             client.Timeout = TimeSpan.FromSeconds(60);
             var inputName = await UploadImageAsync(client, baseUrl, screenshotPath);
             var workflow = File.ReadAllText(workflowPath, Encoding.UTF8).Replace(InputToken, EscapeJsonString(inputName));
-            var queuedAt = DateTime.Now.AddSeconds(-1);
-            var promptId = await QueuePromptAsync(client, baseUrl, workflow);
-            return await WaitForAutoSkeletonOutputAsync(client, baseUrl, promptId, queuedAt);
+            var graph = JObject.Parse(workflow);
+            var keypointsPrefix = ScopeAutoSkeletonKeypoints(graph);
+            var promptId = await QueuePromptAsync(client, baseUrl, graph.ToString(Formatting.None));
+            return await WaitForAutoSkeletonOutputAsync(client, baseUrl, promptId, keypointsPrefix);
         }
     }
 
@@ -953,7 +954,7 @@ internal static class ComfimatorComfyClient
 
     private static async Task<string> UploadImageAsync(HttpClient client, string baseUrl, string path)
     {
-        var fileName = "reanimator_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + ".png";
+        var fileName = "reanimator_" + Guid.NewGuid().ToString("N") + ".png";
         using (var content = new MultipartFormDataContent())
         {
             content.Add(new ByteArrayContent(File.ReadAllBytes(path)), "image", fileName);
@@ -984,87 +985,120 @@ internal static class ComfimatorComfyClient
         return promptId;
     }
 
+    internal static string ScopeAutoSkeletonKeypoints(JObject graph)
+    {
+        var prefix = "reanimator_auto_skeleton_keypoints_" + Guid.NewGuid().ToString("N");
+        var hasFileOutput = false;
+        foreach (var node in graph.Properties())
+        {
+            if ((string)node.Value["class_type"] != "SavePoseKpsAsJsonFile" ||
+                !(node.Value["inputs"] is JObject inputs))
+                continue;
+
+            inputs["filename_prefix"] = prefix;
+            hasFileOutput = true;
+        }
+        return hasFileOutput ? prefix : null;
+    }
+
+    internal static JObject GetCompletedAutoSkeletonOutputs(string history, string promptId)
+    {
+        var entry = JObject.Parse(history)[promptId] as JObject;
+        var status = entry?["status"] as JObject;
+        if ((string)status?["status_str"] == "error")
+            throw new InvalidOperationException("Auto Skeleton failed in ComfyUI (" + promptId + "): " +
+                                                status["messages"]?.ToString(Formatting.None));
+
+        return (bool?)status?["completed"] == true ? entry["outputs"] as JObject ?? new JObject() : null;
+    }
+
     private static async Task<AutoSkeletonResult> WaitForAutoSkeletonOutputAsync(
         HttpClient client,
         string baseUrl,
         string promptId,
-        DateTime queuedAt)
+        string keypointsPrefix)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(45);
-        while (DateTime.UtcNow < deadline)
+        using (var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(45)))
         {
-            await Task.Delay(500);
-            var response = await client.GetAsync(baseUrl + "/history/" + promptId);
-            var body = await response.Content.ReadAsStringAsync();
-            response.EnsureSuccessStatusCode();
-
-            var imageFileName = MatchString(body, "\"filename\"\\s*:\\s*\"([^\"]+\\.png)\"");
-            var poseJsonFileName = MatchString(body, "\"filename\"\\s*:\\s*\"([^\"]+\\.json)\"");
-            var poseJson = MatchString(body, "\"openpose_json\"\\s*:\\s*\\[\\s*\"((?:\\\\.|[^\"])*)\"");
-            string poseJsonPath;
-            if (string.IsNullOrWhiteSpace(imageFileName))
-                TryFindLatestOutputFile(AutoSkeletonPoseImagePrefix, ".png", queuedAt, out imageFileName, out _);
-            if (string.IsNullOrWhiteSpace(poseJson) && string.IsNullOrWhiteSpace(poseJsonFileName))
-                TryFindLatestOutputFile(AutoSkeletonKeypointsPrefix, ".json", queuedAt, out poseJsonFileName, out poseJsonPath);
-            else
-                poseJsonPath = string.Empty;
-
-            if (!string.IsNullOrWhiteSpace(imageFileName) &&
-                (!string.IsNullOrWhiteSpace(poseJson) || !string.IsNullOrWhiteSpace(poseJsonFileName)))
+            try
             {
-                if (string.IsNullOrWhiteSpace(poseJson))
+                while (true)
                 {
-                    poseJson = !string.IsNullOrWhiteSpace(poseJsonPath) && File.Exists(poseJsonPath)
-                    ? File.ReadAllText(poseJsonPath, Encoding.UTF8)
-                    : await ReadOutputTextAsync(client, baseUrl, poseJsonFileName);
-                }
+                    await Task.Delay(500, timeout.Token);
+                    using (var response = await client.GetAsync(baseUrl + "/history/" + Uri.EscapeDataString(promptId), timeout.Token))
+                    {
+                        response.EnsureSuccessStatusCode();
+                        var outputs = GetCompletedAutoSkeletonOutputs(await response.Content.ReadAsStringAsync(), promptId);
+                        if (outputs == null)
+                            continue;
 
-                if (string.IsNullOrWhiteSpace(poseJsonFileName))
-                    poseJsonFileName = "history:openpose_json";
-                return new AutoSkeletonResult(imageFileName, poseJsonFileName, poseJson);
+                        return await ReadAutoSkeletonResultAsync(client, baseUrl, outputs, keypointsPrefix, timeout.Token);
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                throw new TimeoutException("Comfy prompt timed out: " + promptId);
+            }
+        }
+    }
+
+    private static async Task<AutoSkeletonResult> ReadAutoSkeletonResultAsync(
+        HttpClient client, string baseUrl, JObject outputs, string keypointsPrefix,
+        System.Threading.CancellationToken cancellationToken)
+    {
+        string imageFileName = null;
+        JObject poseFile = null;
+        string poseJson = null;
+        foreach (var output in outputs.Properties())
+        {
+            if (!(output.Value is JObject node))
+                continue;
+            if (node["openpose_json"] is JArray poses && poses.Count > 0)
+                poseJson = (string)poses[0];
+            foreach (var field in node.Properties())
+            {
+                if (!(field.Value is JArray files))
+                    continue;
+                foreach (var file in files)
+                {
+                    if (!(file is JObject descriptor))
+                        continue;
+                    var name = (string)descriptor["filename"];
+                    if (name?.EndsWith(".png", StringComparison.OrdinalIgnoreCase) == true)
+                        imageFileName ??= name;
+                    if (name?.EndsWith(".json", StringComparison.OrdinalIgnoreCase) == true)
+                        poseFile ??= descriptor;
+                }
             }
         }
 
-        throw new TimeoutException("Comfy prompt timed out: " + promptId);
-    }
-
-    private static bool TryFindLatestOutputFile(
-        string fileNamePrefix,
-        string extension,
-        DateTime notOlderThan,
-        out string fileName,
-        out string fullPath)
-    {
-        fileName = string.Empty;
-        fullPath = string.Empty;
-        if (!Directory.Exists(DefaultOutputDirectory))
-            return false;
-
-        var pattern = fileNamePrefix + "*" + extension;
-        var files = Directory.GetFiles(DefaultOutputDirectory, pattern, SearchOption.TopDirectoryOnly);
-        var bestTime = DateTime.MinValue;
-        for (var i = 0; i < files.Length; i++)
+        var poseFileName = "history:openpose_json";
+        if (string.IsNullOrWhiteSpace(poseJson) && poseFile != null)
         {
-            var path = files[i];
-            var time = File.GetLastWriteTime(path);
-            if (time < notOlderThan || time <= bestTime)
-                continue;
-
-            bestTime = time;
-            fullPath = path;
-            fileName = Path.GetFileName(path);
+            poseFileName = (string)poseFile["filename"];
+            var query = "?filename=" + Uri.EscapeDataString(poseFileName) +
+                        "&subfolder=" + Uri.EscapeDataString((string)poseFile["subfolder"] ?? "") +
+                        "&type=" + Uri.EscapeDataString((string)poseFile["type"] ?? "output");
+            using (var response = await client.GetAsync(baseUrl + "/view" + query, cancellationToken))
+            {
+                response.EnsureSuccessStatusCode();
+                poseJson = await response.Content.ReadAsStringAsync();
+            }
         }
+        if (string.IsNullOrWhiteSpace(poseJson) && keypointsPrefix != null && Directory.Exists(DefaultOutputDirectory))
+        {
+            var files = Directory.GetFiles(DefaultOutputDirectory, keypointsPrefix + "*.json");
+            if (files.Length == 1)
+            {
+                poseFileName = Path.GetFileName(files[0]);
+                poseJson = File.ReadAllText(files[0], Encoding.UTF8);
+            }
+        }
+        if (string.IsNullOrWhiteSpace(imageFileName) || string.IsNullOrWhiteSpace(poseJson))
+            throw new InvalidOperationException("Auto Skeleton completed without a pose image or unambiguous keypoint JSON.");
 
-        return !string.IsNullOrWhiteSpace(fullPath);
-    }
-
-    private static async Task<string> ReadOutputTextAsync(HttpClient client, string baseUrl, string fileName)
-    {
-        var response = await client.GetAsync(
-            baseUrl + "/view?filename=" + Uri.EscapeDataString(fileName) + "&subfolder=&type=output");
-        var body = await response.Content.ReadAsStringAsync();
-        response.EnsureSuccessStatusCode();
-        return body ?? string.Empty;
+        return new AutoSkeletonResult(imageFileName, poseFileName, poseJson);
     }
 
     private static string NormalizeServerUrl(string serverUrl)
