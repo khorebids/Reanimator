@@ -239,7 +239,10 @@ public partial class Reanimator : EditorWindow
                 }
             }
             if (GUILayout.Button("Clear Point", GUILayout.Height(22f)))
+            {
                 layerPreviewRenderer.ClearBoobPoint();
+                Repaint();
+            }
         }
     }
 

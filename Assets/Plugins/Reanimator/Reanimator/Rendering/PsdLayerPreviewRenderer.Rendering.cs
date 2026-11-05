@@ -205,7 +205,7 @@ public partial class PsdLayerPreviewRenderer
         if (edgeWrite > 1)
         {
             Handles.color = innerLineColor;
-            Handles.DrawLines(vertexEdgeSegments);
+            DrawWrittenSegments(vertexEdgeSegments, edgeWrite);
         }
 
         var boundaryPairCount = boundaryPairs != null ? boundaryPairs.Length / 2 : 0;
@@ -225,7 +225,7 @@ public partial class PsdLayerPreviewRenderer
         if (boundaryWrite > 1)
         {
             Handles.color = boundaryLineColor;
-            Handles.DrawLines(vertexBoundarySegments);
+            DrawWrittenSegments(vertexBoundarySegments, boundaryWrite);
             DrawShiftedSegments(vertexBoundarySegments, boundaryWrite, ref vertexBoundarySegmentsShifted, new Vector2(thickOffset, 0f), boundaryLineColor);
             DrawShiftedSegments(vertexBoundarySegments, boundaryWrite, ref vertexBoundarySegmentsShifted, new Vector2(0f, thickOffset), boundaryLineColor);
         }
@@ -245,7 +245,7 @@ public partial class PsdLayerPreviewRenderer
         if (pointWrite > 1)
         {
             Handles.color = pointColor;
-            Handles.DrawLines(vertexPointSegments);
+            DrawWrittenSegments(vertexPointSegments, pointWrite);
         }
 
         if (editGeometrySelectedVertexIndices != null &&
@@ -360,7 +360,7 @@ public partial class PsdLayerPreviewRenderer
             if (edgeWrite > 1)
             {
                 Handles.color = innerLineColor;
-                Handles.DrawLines(vertexEdgeSegments);
+                DrawWrittenSegments(vertexEdgeSegments, edgeWrite);
             }
 
             var boundaryPairCount = boundaryPairs != null ? boundaryPairs.Length / 2 : 0;
@@ -379,7 +379,7 @@ public partial class PsdLayerPreviewRenderer
             if (boundaryWrite > 1)
             {
                 Handles.color = boundaryLineColor;
-                Handles.DrawLines(vertexBoundarySegments);
+                DrawWrittenSegments(vertexBoundarySegments, boundaryWrite);
             }
 
             EnsureVertexBuffer(ref vertexPointSegments, vertexCount * 4);
@@ -396,7 +396,7 @@ public partial class PsdLayerPreviewRenderer
             if (pointWrite > 1)
             {
                 Handles.color = pointColor;
-                Handles.DrawLines(vertexPointSegments);
+                DrawWrittenSegments(vertexPointSegments, pointWrite);
             }
         }
 
@@ -1289,6 +1289,35 @@ public partial class PsdLayerPreviewRenderer
             data.pivotPixels);
     }
 
+    private static readonly Dictionary<int, int[]> previewLineIndices = new Dictionary<int, int[]>();
+
+    private static void DrawWrittenSegments(Vector3[] points, int writtenCount)
+    {
+        if (writtenCount < 2)
+            return;
+
+        // Filtering invalid or boundary edges can leave old view coordinates in the buffer tail.
+        if (writtenCount == points.Length)
+            Handles.DrawLines(points);
+        else
+            Handles.DrawLines(points, GetPreviewLineIndices(writtenCount));
+    }
+
+    internal static int[] GetPreviewLineIndices(int writtenCount)
+    {
+        if (previewLineIndices.TryGetValue(writtenCount, out var indices))
+            return indices;
+
+        if (previewLineIndices.Count >= 16)
+            previewLineIndices.Clear();
+
+        indices = new int[writtenCount];
+        for (var i = 0; i < indices.Length; i++)
+            indices[i] = i;
+        previewLineIndices.Add(writtenCount, indices);
+        return indices;
+    }
+
     private void DrawShiftedSegments(Vector3[] source, int count, ref Vector3[] shiftedBuffer, Vector2 offset, Color color)
     {
         if (count <= 1)
@@ -1299,7 +1328,7 @@ public partial class PsdLayerPreviewRenderer
             shiftedBuffer[i] = source[i] + new Vector3(offset.x, offset.y, 0f);
 
         Handles.color = color;
-        Handles.DrawLines(shiftedBuffer);
+        DrawWrittenSegments(shiftedBuffer, count);
     }
 
 }

@@ -160,10 +160,22 @@ internal static partial class ReanimatorSelfTests
         }
     }
 
+    private static void PreviewLinesExcludeStaleScreenCoordinates()
+    {
+        var previous = PsdLayerPreviewRenderer.GetPreviewLineIndices(8);
+        var current = PsdLayerPreviewRenderer.GetPreviewLineIndices(4);
+        AssertArray(new[] { 0, 1, 2, 3 }, current,
+            "After filtering, only the two freshly projected line pairs can be submitted.");
+        AssertEqual(8, previous.Length, "A smaller redraw must not truncate the cached larger draw.");
+        AssertTrue(ReferenceEquals(current, PsdLayerPreviewRenderer.GetPreviewLineIndices(4)),
+            "Repeated redraws of the same edge count should reuse the index array.");
+    }
+
     private static List<Case> BuildCases()
     {
         return new List<Case>
         {
+            new Case("Preview lines exclude stale screen coordinates", PreviewLinesExcludeStaleScreenCoordinates),
             new Case("Auto Skeleton scopes outputs and detects Comfy errors", AutoSkeletonScopesOutputsAndDetectsErrors),
             new Case("Apply restores persisted PSD importer metadata", ApplyRestoresPersistedImporterMetadata),
             new Case("VolumeCurve state is serializable and editable", VolumeCurveStateIsSerializableAndEditable),
