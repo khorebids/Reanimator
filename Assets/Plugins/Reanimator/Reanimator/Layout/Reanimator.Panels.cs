@@ -690,6 +690,7 @@ public partial class Reanimator : EditorWindow
                 case "geometry.edit":
                 case "geometry.limbs":
                 case "geometry.joint":
+                case "geometry.boob":
                 case "weights.slider":
                 case "utility.generate-missing-geometry":
                 case "utility.kill-selected-sprite-weights":
@@ -709,6 +710,7 @@ public partial class Reanimator : EditorWindow
             case "Default Geometry":
             case "Limbs":
             case "Joint":
+            case "Boob":
             case "Generate Missing Geometry":
             case "Kill Weights":
             case "CopyBon":
