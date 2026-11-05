@@ -196,7 +196,7 @@ public partial class Reanimator : EditorWindow
 
                 var version = GUILayout.Toolbar(
                     layerPreviewRenderer.BoobToolVersion,
-                    new[] { "V1", "V2" });
+                    new[] { "Single", "Full body" });
                 layerPreviewRenderer.BoobToolVersion = version;
                 GUILayout.Space(4f);
 
