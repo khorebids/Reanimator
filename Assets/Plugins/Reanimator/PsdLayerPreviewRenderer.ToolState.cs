@@ -170,8 +170,28 @@ public partial class PsdLayerPreviewRenderer
         boobV2LayerStableKey = string.Empty;
     }
 
+    public bool IsBoobV2ItemAssigned(int item)
+    {
+        switch (item)
+        {
+            case 0: return BoobV2HasLeftTarget;
+            case 1: return BoobV2HasRightTarget;
+            case 2: return BoobV2FirstContourPointCount > 0;
+            case 3: return BoobV2SecondContourPointCount > 0;
+            default: return false;
+        }
+    }
+
     public void ClearSelectedBoobV2()
     {
+        ClearBoobV2Item(BoobV2Selection);
+    }
+
+    public void ClearBoobV2Item(int item)
+    {
+        if (!IsBoobV2ItemAssigned(item))
+            return;
+
         if (boobV2DrawingContour >= 0 || boobV2ActiveTarget >= 0)
         {
             if (GUIUtility.hotControl == boobControlId && boobControlId != 0)
@@ -183,8 +203,8 @@ public partial class PsdLayerPreviewRenderer
             boobV2WorkingContourDoc.Clear();
         }
 
-        RegisterUndo("Clear Selected Boob V2 Item");
-        switch (BoobV2Selection)
+        RegisterUndo("Clear Boob V2 Item");
+        switch (item)
         {
             case 0:
                 boobV2HasTargetA = false;
@@ -198,7 +218,7 @@ public partial class PsdLayerPreviewRenderer
                 boobV2RawContourADoc.Clear();
                 boobV2ContourADoc.Clear();
                 break;
-            default:
+            case 3:
                 boobV2RawContourBDoc.Clear();
                 boobV2ContourBDoc.Clear();
                 break;

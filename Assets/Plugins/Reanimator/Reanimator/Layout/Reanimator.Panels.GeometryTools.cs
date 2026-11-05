@@ -248,12 +248,16 @@ public partial class Reanimator : EditorWindow
         EditorGUILayout.HelpBox(
             "Choose exactly what to edit. Nipple targets can be clicked or dragged; contours are drawn while holding LMB. Contours close and smooth automatically.",
             MessageType.Info);
-        var selection = GUILayout.SelectionGrid(
-            layerPreviewRenderer.BoobV2Selection,
-            new[] { "Left Nipple", "Right Nipple", "Left Contour", "Right Contour" },
-            2,
-            GUILayout.Height(44f));
-        layerPreviewRenderer.BoobV2Selection = selection;
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            DrawBoobV2Item(0, "Left Nipple");
+            DrawBoobV2Item(1, "Right Nipple");
+        }
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            DrawBoobV2Item(2, "Left Contour");
+            DrawBoobV2Item(3, "Right Contour");
+        }
         EditorGUILayout.HelpBox(layerPreviewRenderer.BoobV2SelectionDescription, MessageType.None);
         layerPreviewRenderer.BoobV2ContourDensity = EditorGUILayout.IntSlider(
             "Density",
@@ -302,6 +306,35 @@ public partial class Reanimator : EditorWindow
                 {
                     ShowNotification(new GUIContent(string.IsNullOrEmpty(error) ? "Apply failed" : error));
                 }
+            }
+        }
+    }
+
+    private void DrawBoobV2Item(int item, string label)
+    {
+        const float buttonSize = 20f;
+        var assigned = layerPreviewRenderer.IsBoobV2ItemAssigned(item);
+        var selected = layerPreviewRenderer.BoobV2Selection == item;
+        var previousColor = GUI.backgroundColor;
+        try
+        {
+            if (!assigned)
+                GUI.backgroundColor = new Color(0.23f, 0.88f, 0.78f);
+            if (GUILayout.Toggle(selected, label, EditorStyles.miniButton, GUILayout.Height(buttonSize), GUILayout.ExpandWidth(true)))
+                layerPreviewRenderer.BoobV2Selection = item;
+        }
+        finally
+        {
+            GUI.backgroundColor = previousColor;
+        }
+
+        using (new EditorGUI.DisabledScope(!assigned))
+        {
+            if (GUILayout.Button(new GUIContent("×", "Clear " + label), EditorStyles.miniButton,
+                    GUILayout.Width(buttonSize), GUILayout.Height(buttonSize)))
+            {
+                layerPreviewRenderer.ClearBoobV2Item(item);
+                Repaint();
             }
         }
     }
