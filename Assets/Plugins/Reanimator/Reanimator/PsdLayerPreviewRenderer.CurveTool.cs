@@ -68,6 +68,7 @@ public partial class PsdLayerPreviewRenderer
             GUIUtility.hotControl = 0;
         curveLayerStableKey = string.Empty;
         curveSelectedLoopPositions.Clear();
+        curveHasDraftWeights = false;
         curveGraphSelectionSignature = string.Empty;
         curveEditedChildWeights.Clear();
         ClearCurveSecondBoneSelection();
@@ -82,6 +83,7 @@ public partial class PsdLayerPreviewRenderer
 
     public void ResetCurveGraphToCurrentWeights()
     {
+        curveHasDraftWeights = false;
         curveGraphSelectionSignature = string.Empty;
         curveEditedChildWeights.Clear();
         ClearCurveSecondBoneSelection();
@@ -255,6 +257,7 @@ public partial class PsdLayerPreviewRenderer
         var signature = BuildCurveSelectionSignature();
         if (!string.Equals(curveGraphSelectionSignature, signature, StringComparison.Ordinal) || curveEditedChildWeights == null || curveEditedChildWeights.Count != count)
         {
+            curveHasDraftWeights = false;
             curveGraphSelectionSignature = signature;
             if (curveEditedChildWeights == null)
                 curveEditedChildWeights = new List<float>(count);

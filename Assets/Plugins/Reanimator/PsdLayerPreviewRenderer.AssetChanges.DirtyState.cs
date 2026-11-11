@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -16,20 +17,20 @@ public partial class PsdLayerPreviewRenderer
         AddDirtyLayerState(layer, ref dirtyLayerPositionGuids, ref dirtyLayerPositionStableKeys);
     }
 
-    private static void AddDirtyLayerState(LayerInfo layer, ref HashSet<string> dirtyGuids, ref HashSet<string> dirtyStableKeys)
+    private static void AddDirtyLayerState(LayerInfo layer, ref List<string> dirtyGuids, ref List<string> dirtyStableKeys)
     {
         if (layer == null)
             return;
 
-        dirtyGuids ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        dirtyStableKeys ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        dirtyGuids ??= new List<string>();
+        dirtyStableKeys ??= new List<string>();
 
         var guid = NormalizeGuidString(layer.spriteGuid);
-        if (!string.IsNullOrEmpty(guid))
+        if (!string.IsNullOrEmpty(guid) && !dirtyGuids.Contains(guid, StringComparer.OrdinalIgnoreCase))
             dirtyGuids.Add(guid);
 
         var stableKey = BuildKey(layer.name, layer.layerId);
-        if (!string.IsNullOrEmpty(stableKey))
+        if (!string.IsNullOrEmpty(stableKey) && !dirtyStableKeys.Contains(stableKey, StringComparer.OrdinalIgnoreCase))
             dirtyStableKeys.Add(stableKey);
     }
 
@@ -46,8 +47,8 @@ public partial class PsdLayerPreviewRenderer
     private static bool IsDirtyLayerState(
         LayerInfo layer,
         string spriteGuid,
-        HashSet<string> dirtyGuids,
-        HashSet<string> dirtyStableKeys)
+        List<string> dirtyGuids,
+        List<string> dirtyStableKeys)
     {
         if ((dirtyGuids == null || dirtyGuids.Count == 0) &&
             (dirtyStableKeys == null || dirtyStableKeys.Count == 0))
@@ -56,7 +57,7 @@ public partial class PsdLayerPreviewRenderer
         var guid = NormalizeGuidString(spriteGuid);
         if (!string.IsNullOrEmpty(guid) &&
             dirtyGuids != null &&
-            dirtyGuids.Contains(guid))
+            dirtyGuids.Contains(guid, StringComparer.OrdinalIgnoreCase))
             return true;
 
         if (layer == null)
@@ -65,13 +66,13 @@ public partial class PsdLayerPreviewRenderer
         var layerGuid = NormalizeGuidString(layer.spriteGuid);
         if (!string.IsNullOrEmpty(layerGuid) &&
             dirtyGuids != null &&
-            dirtyGuids.Contains(layerGuid))
+            dirtyGuids.Contains(layerGuid, StringComparer.OrdinalIgnoreCase))
             return true;
 
         var stableKey = BuildKey(layer.name, layer.layerId);
         return !string.IsNullOrEmpty(stableKey) &&
                dirtyStableKeys != null &&
-               dirtyStableKeys.Contains(stableKey);
+               dirtyStableKeys.Contains(stableKey, StringComparer.OrdinalIgnoreCase);
     }
 
     private bool HasDirtyLayerSpriteState()

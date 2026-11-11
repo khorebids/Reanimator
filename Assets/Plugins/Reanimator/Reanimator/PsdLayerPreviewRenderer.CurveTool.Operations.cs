@@ -234,6 +234,7 @@ public partial class PsdLayerPreviewRenderer
             RegisterUndo("Edit WeightCurve");
         }
 
+        curveHasDraftWeights = true;
         curveEditedChildWeights[sampleIndex] = nextChildWeight;
         return ApplyCurveEditedWeightsToSelection(false);
     }
@@ -247,6 +248,7 @@ public partial class PsdLayerPreviewRenderer
             return false;
         }
 
+        curveHasDraftWeights = false;
         error = "AnalizeCurve applied";
         return true;
     }
@@ -322,6 +324,7 @@ public partial class PsdLayerPreviewRenderer
         }
 
         MarkSkinningWeightsChanged(data);
+        curveHasDraftWeights = false;
         curveGraphSelectionSignature = string.Empty;
         curveEditedChildWeights.Clear();
 
@@ -330,6 +333,12 @@ public partial class PsdLayerPreviewRenderer
         MarkEditGeometryDataChanged(data, selectionKey, stableKey);
         error = "Additional weights removed";
         return true;
+    }
+
+    internal void RestoreCurveWeightPreviewAfterUndo()
+    {
+        if (curveHasDraftWeights && !string.IsNullOrEmpty(curveGraphSelectionSignature) && curveEditedChildWeights.Count > 0)
+            ApplyCurveEditedWeightsToSelection(false);
     }
 
     private bool ApplyCurveEditedWeightsToSelection(bool markPendingChanges)
@@ -346,6 +355,9 @@ public partial class PsdLayerPreviewRenderer
                 out _,
                 out var actualChildWeights))
             return false;
+
+        if (markPendingChanges)
+            RegisterUndo("Apply WeightCurve");
 
         EnsureCurveEditableState(actualChildWeights);
         EnsureBoneWeightsArraySize(data, data.vertices != null ? data.vertices.Length : 0);

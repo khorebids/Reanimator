@@ -78,7 +78,14 @@ public partial class PsdLayerPreviewRenderer
         if (radiusCullState.SyncToActiveLimbLine)
             SyncRadiusCullPointToActiveLimbLine(true);
 
-        if (spriteAtlasMode)
+        bool selectingContour = options.ActivePreviewModule is ReanimatorSoftContourModule &&
+            SelectingSoftContourPoints;
+        if (selectingContour)
+        {
+            options.ActivePreviewModule.HandlePreviewInput(options.Api,
+                new ReanimatorPreviewContext(localRect, coordinateSpace, drawList, visibility));
+        }
+        else if (spriteAtlasMode)
         {
             HandleSpriteAtlasFrameInput(localRect, coordinateSpace, drawList);
         }
@@ -136,7 +143,8 @@ public partial class PsdLayerPreviewRenderer
                     : default(ReanimatorBoneInputOptions);
                 HandleBoneInput(localRect, coordinateSpace, options.AllowBoneTransformEditing, options.AllowBoneLengthEditing, boneInputOptions);
             }
-            if (string.Equals(options.ActivePreviewModule.Id, "weights.projector", StringComparison.OrdinalIgnoreCase) &&
+            if ((string.Equals(options.ActivePreviewModule.Id, "weights.projector", StringComparison.OrdinalIgnoreCase) ||
+                 options.ActivePreviewModule is ReanimatorSoftContourModule) &&
                 (Event.current == null || Event.current.type != EventType.Used))
                 HandleSpriteSelection(localRect, coordinateSpace, drawList);
         }
@@ -221,8 +229,10 @@ public partial class PsdLayerPreviewRenderer
 
         if (spriteAtlasMode)
         {
-            if (options.SpriteAtlasGeometryMode)
+            if (options.SpriteAtlasGeometryMode && !(options.ActivePreviewModule is ReanimatorSoftContourModule))
                 DrawSpriteAtlasGeometryOverlay(coordinateSpace, drawList, selectedLayerStableKey, visibility.VertexAlpha);
+            if (options.ActivePreviewModule is ReanimatorSoftContourModule)
+                DrawSoftContour(coordinateSpace);
             if (IsDebugModeEnabled)
             {
                 DrawDebugOverlay(coordinateSpace, drawList, selectedLayer, visibility.VertexAlpha, visibility.BoneAlpha, options);
@@ -240,7 +250,12 @@ public partial class PsdLayerPreviewRenderer
         var drewRadiusCullPreviewGeometry = false;
         if (!options.SuppressGeometryOverlay && visibility.VertexAlpha > 0f && vertexDataByLayerSelectionKey.Count > 0)
         {
-            if (shouldDrawCullGeometryPreview)
+            if (tools.LimbBone && DrawLimbBonePreview(coordinateSpace, visibility.VertexAlpha, tools.LimbBoneChild,
+                    tools.LimbBoneCull, options.RadiusCull.Radius, options.RadiusCull.RemoveInnerVertices))
+            {
+                drewSomething = true;
+            }
+            else if (shouldDrawCullGeometryPreview)
             {
                 if (radiusCullState.LimbPreviewActive)
                 {
@@ -270,11 +285,11 @@ public partial class PsdLayerPreviewRenderer
                         options.Joint.EndLongPointsOffset);
                 }
                 if (!drewRadiusCullPreviewGeometry && !activeModuleOverridesGeometryPreview)
-                    DrawVertices(coordinateSpace, visibility.VertexAlpha);
+                    DrawVertices(coordinateSpace, visibility.VertexAlpha, !tools.LimbBone);
             }
             else if (!activeModuleOverridesGeometryPreview)
             {
-                DrawVertices(coordinateSpace, visibility.VertexAlpha);
+                DrawVertices(coordinateSpace, visibility.VertexAlpha, !tools.LimbBone);
             }
             drewSomething = true;
         }
@@ -723,7 +738,7 @@ public partial class PsdLayerPreviewRenderer
         if (string.Equals(cachedAssetDependencyHash, currentDependencyHash, StringComparison.Ordinal))
             return false;
 
-        if (hasPendingChanges)
+        if (hasPendingChanges || HasPendingMeshWorkForAsset(assetPath))
             return false;
 
         cachedAssetDependencyHash = currentDependencyHash;

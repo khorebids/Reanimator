@@ -49,8 +49,8 @@ internal sealed partial class ReanimatorProjectorModule : ReanimatorModuleBase, 
 
     public override bool DrawSettings(Reanimator.SystemApi api, float availableHeight)
     {
-        var contentHeight = Mathf.Max(80f, availableHeight - 10f);
-        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox, GUILayout.ExpandHeight(true)))
+        var contentHeight = Mathf.Max(1f, availableHeight - 8f);
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox, GUILayout.Height(contentHeight)))
         {
             EditorGUILayout.LabelField("Projector", EditorStyles.boldLabel);
             var nextMode = (ReanimatorProjectorMode)GUILayout.Toolbar((int)settings.Mode, ProjectorModeLabels, GUILayout.Height(22f));
@@ -184,7 +184,14 @@ internal sealed partial class ReanimatorProjectorModule : ReanimatorModuleBase, 
 
             var selectedCount = 0;
             var nextHoveredCandidateKey = string.Empty;
-            var scrollHeight = Mathf.Max(48f, contentHeight - (settings.Mode == ReanimatorProjectorMode.Stretch ? (settings.StretchUseCull ? 202f : 178f) : 154f));
+            // Keep the list viewport separate from the two rows of action buttons.
+            var headerHeight = settings.Mode == ReanimatorProjectorMode.Stretch
+                ? (settings.StretchUseCull ? 178f : 154f)
+                : 128f;
+            if (string.IsNullOrWhiteSpace(settings.TargetSelectionKey) && hasSelectedTarget)
+                headerHeight += EditorGUIUtility.singleLineHeight;
+            const float footerHeight = 72f;
+            var scrollHeight = Mathf.Max(24f, contentHeight - headerHeight - footerHeight);
             using (var scrollScope = new EditorGUILayout.ScrollViewScope(scroll, GUILayout.Height(scrollHeight)))
             {
                 scroll = scrollScope.scrollPosition;
@@ -223,7 +230,6 @@ internal sealed partial class ReanimatorProjectorModule : ReanimatorModuleBase, 
             if (CanUpdateCandidateHoverFromEvent(Event.current))
                 SetHoveredCandidateKey(api, nextHoveredCandidateKey);
 
-            GUILayout.FlexibleSpace();
             using (new EditorGUI.DisabledScope(candidates == null || candidates.Length == 0))
             {
                 using (new EditorGUILayout.HorizontalScope())

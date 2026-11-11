@@ -171,6 +171,8 @@ public partial class PsdLayerPreviewRenderer
                 Quaternion.Angle(bone.rotation, targetRotation) <= 1e-4f)
                 continue;
 
+            if (!changed && registerUndo)
+                RegisterUndo("Restore Pose");
             bone.position = bone.initialPosition;
             bone.rotation = targetRotation;
             bones[i] = bone;
@@ -180,8 +182,6 @@ public partial class PsdLayerPreviewRenderer
         if (!changed)
             return false;
 
-        if (registerUndo)
-            RegisterUndo("Restore Pose");
         RecomputeBoneWorldTransforms();
         InvalidateBonePose();
         bonePoseAtRest = true;

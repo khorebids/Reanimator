@@ -36,14 +36,23 @@ public partial class PsdLayerPreviewRenderer
             return false;
 
         var boneWeight = BuildSanitizedEditGeometryBoneWeight(boneIndices, weights, spriteBoneCount, normalize);
+        var changed = false;
         for (var i = 0; i < weightSliderSelectedVertexIndices.Count; i++)
         {
             var vertexIndex = weightSliderSelectedVertexIndices[i];
             if (vertexIndex < 0 || vertexIndex >= data.boneWeights.Length)
                 continue;
 
+            if (AreBoneWeightsApproximatelyEqual(data.boneWeights[vertexIndex], boneWeight))
+                continue;
+            if (!changed)
+                RegisterUndo("Apply Slider Weights");
+            changed = true;
             data.boneWeights[vertexIndex] = boneWeight;
         }
+
+        if (!changed)
+            return false;
 
         MarkSkinningWeightsChanged(data);
         MarkEditGeometryDataChanged(data, selectionKey, stableKey);

@@ -100,22 +100,22 @@ internal static partial class ReanimatorSelfTests
         var allInIndex = allInSource.IndexOf("private async void RunAllIn", StringComparison.Ordinal);
         var preflightIndex = allInSource.IndexOf("host.TryValidateAllInPreflight", allInIndex, StringComparison.Ordinal);
         var comfyCheckIndex = allInSource.IndexOf("connectionStatus = await ComfimatorComfyClient.CheckConnectionAsync(serverUrl)", allInIndex, StringComparison.Ordinal);
-        var geometryIndex = allInSource.IndexOf("var geometry = RunAutoGeometry(host)", allInIndex, StringComparison.Ordinal);
-        var weightsIndex = allInSource.IndexOf("var weights = RunAutoWeights(host)", allInIndex, StringComparison.Ordinal);
-        var faceEyesIndex = allInSource.IndexOf("var faceEyes = RunFaceEyes(host)", allInIndex, StringComparison.Ordinal);
+        var undoGroupIndex = allInSource.IndexOf("host.RunUndoGroup(\"ALLIN\"", allInIndex, StringComparison.Ordinal);
         var completeIndex = allInSource.IndexOf("SetAllInProgress(\"ALLIN complete\"", allInIndex, StringComparison.Ordinal);
+        var commitIndex = allInSource.IndexOf("private string ApplyAllInStages", allInIndex, StringComparison.Ordinal);
+        var geometryIndex = allInSource.IndexOf("geometry = RunAutoGeometry(host)", commitIndex, StringComparison.Ordinal);
+        var applyPoseIndex = allInSource.IndexOf("var skeleton = applySkeleton()", commitIndex, StringComparison.Ordinal);
+        var weightsIndex = allInSource.IndexOf("var weights = RunAutoWeights(host)", commitIndex, StringComparison.Ordinal);
+        var faceEyesIndex = allInSource.IndexOf("RunFaceEyes(host)", commitIndex, StringComparison.Ordinal);
         var allInEndIndex = allInSource.IndexOf("private void SetAllInProgress", allInIndex, StringComparison.Ordinal);
         var allInBody = allInEndIndex > allInIndex
             ? allInSource.Substring(allInIndex, allInEndIndex - allInIndex)
             : string.Empty;
         AssertTrue(preflightIndex >= 0 && comfyCheckIndex > preflightIndex, "ALLIN must reject red naming indicators before contacting Comfy or changing any state.");
-        AssertTrue(comfyCheckIndex >= 0 && geometryIndex > comfyCheckIndex, "ALLIN should verify Comfy before changing geometry.");
-        AssertEqual(
-            2,
-            CountOccurrences(allInBody, "RunAutoGeometry(host)"),
-            "ALLIN should regenerate deterministic geometry immediately before Auto Weights so async skeleton work cannot restore stale importer topology.");
-        AssertTrue(weightsIndex >= 0 && faceEyesIndex > weightsIndex, "ALLIN should apply Face Eyes after Auto Weights.");
-        AssertTrue(completeIndex > faceEyesIndex, "Face Eyes should be the final ALLIN stage before completion.");
+        AssertTrue(undoGroupIndex > comfyCheckIndex && completeIndex > undoGroupIndex,
+            "ALLIN should commit the result in one native Undo group after Comfy responds.");
+        AssertTrue(geometryIndex > commitIndex && applyPoseIndex > geometryIndex && weightsIndex > applyPoseIndex && faceEyesIndex > weightsIndex,
+            "ALLIN should apply geometry, skeleton, weights and Face Eyes in order without awaiting inside the commit.");
         AssertFalse(allInBody.Contains("RunFullBoobsFromButton"), "ALLIN must not invoke Qwen-dependent FullBoobs automation.");
         AssertTrue(
             allInBody.Contains("useQwenNipplePositioning: false"),

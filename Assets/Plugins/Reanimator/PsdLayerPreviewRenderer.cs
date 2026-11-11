@@ -261,10 +261,10 @@ public partial class PsdLayerPreviewRenderer
     [NonSerialized] private Dictionary<string, bool> pendingBoneVisibility;
     [NonSerialized] private Dictionary<int, int> pendingBoneDepth;
     [NonSerialized] private Dictionary<int, Color> pendingBoneColor;
-    [NonSerialized] private HashSet<string> dirtyLayerSpriteGuids;
-    [NonSerialized] private HashSet<string> dirtyLayerStableKeys;
-    [NonSerialized] private HashSet<string> dirtyLayerPositionGuids;
-    [NonSerialized] private HashSet<string> dirtyLayerPositionStableKeys;
+    [SerializeField] private List<string> dirtyLayerSpriteGuids;
+    [SerializeField] private List<string> dirtyLayerStableKeys;
+    [SerializeField] private List<string> dirtyLayerPositionGuids;
+    [SerializeField] private List<string> dirtyLayerPositionStableKeys;
     [SerializeField] private List<LayerInfo> layerInfos = new List<LayerInfo>();
     [SerializeField] private List<LayerHierarchyNode> layerHierarchyNodes = new List<LayerHierarchyNode>();
     [SerializeField] private int selectedBoneIndex = -1;
@@ -359,6 +359,7 @@ public partial class PsdLayerPreviewRenderer
     [SerializeField] private string boobV2LayerStableKey = string.Empty;
     [SerializeField] private string curveLayerStableKey = string.Empty;
     [SerializeField] private List<int> curveSelectedLoopPositions = new List<int>();
+    [SerializeField] private bool curveHasDraftWeights;
     [SerializeField] private string curveGraphSelectionSignature = string.Empty;
     [SerializeField] private List<float> curveEditedChildWeights = new List<float>();
     [SerializeField] private bool curveUseAbsoluteGeometry;
@@ -668,6 +669,7 @@ public partial class PsdLayerPreviewRenderer
             var next = Mathf.Clamp(value, 0, 6);
             if (boobV2SmoothingPasses == next)
                 return;
+            RegisterUndo("Set Boob V2 Contour Smoothing");
             boobV2SmoothingPasses = next;
             RebuildBoobV2ContoursFromRaw();
         }
@@ -680,6 +682,7 @@ public partial class PsdLayerPreviewRenderer
             var next = Mathf.Clamp(value, 8, 128);
             if (BoobV2ContourDensity == next)
                 return;
+            RegisterUndo("Set Boob V2 Contour Density");
             boobV2ContourDensity = next;
             RebuildBoobV2ContoursFromRaw();
         }

@@ -61,15 +61,16 @@ public partial class PsdLayerPreviewRenderer
         if (string.IsNullOrWhiteSpace(cachedPath))
             return;
 
-        if (hasPendingChanges)
+        var currentHash = AssetDatabase.GetAssetDependencyHash(cachedPath).ToString();
+        if (!hasPendingChanges && !string.Equals(cachedAssetDependencyHash, currentHash, StringComparison.Ordinal))
         {
-            if (cachedTexture == null)
-                cachedTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(cachedPath);
-            RestoreRuntimeStateAfterSerializedUndo();
+            Rebuild(cachedPath);
             return;
         }
 
-        Rebuild(cachedPath);
+        if (cachedTexture == null)
+            cachedTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(cachedPath);
+        RestoreRuntimeStateAfterSerializedUndo();
     }
 
     private void RestoreRuntimeStateAfterSerializedUndo()
@@ -82,7 +83,9 @@ public partial class PsdLayerPreviewRenderer
         BuildBoneDrawOrder();
         boneOrderVersion++;
         RecomputeBoneWorldTransforms();
+        var restoredPoseAtRest = bonePoseAtRest;
         InvalidateBonePose();
+        bonePoseAtRest = restoredPoseAtRest;
 
         // LayerVertexData is a runtime cache and is intentionally not serialized by
         // Unity Undo. Rebuild it from the importer, then reapply the serialized
@@ -90,6 +93,7 @@ public partial class PsdLayerPreviewRenderer
         // Joint V2 could restore its bones and patch list while leaving the applied
         // topology, weights and bind matrices visible in the live cache.
         BuildVertices(cachedPath);
+        InvalidateRadiusCullPreviewCache(true);
 
         if (selectedBoneIndex >= bones.Count)
             selectedBoneIndex = -1;

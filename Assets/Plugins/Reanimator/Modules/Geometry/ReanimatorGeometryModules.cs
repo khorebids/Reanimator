@@ -78,6 +78,75 @@ internal sealed partial class ReanimatorBoobModule : ReanimatorToolModeModule
     }
 }
 
+internal sealed class ReanimatorSoftContourModule : ReanimatorToolModeModule, IReanimatorPreviewModule
+{
+    public ReanimatorSoftContourModule()
+        : base("geometry.soft-contour", "Geometry", 30, 130, "SC", ReanimatorToolMode.SoftContour, 80,
+            DrawPanel)
+    {
+    }
+
+    public override void Invoke(Reanimator.SystemApi api)
+    {
+        if (api?.ActiveToolMode == ReanimatorToolMode.SoftContour)
+        {
+            api.ExitActiveTool();
+            api.Repaint();
+            return;
+        }
+
+        if (api == null) return;
+        if (api.PreviewRenderer == null || !api.PreviewRenderer.HasSoftContourSelection())
+        {
+            api.ShowNotification("SC: select a sprite and a bone.");
+            return;
+        }
+        base.Invoke(api);
+    }
+
+    public bool AllowBoneInputAfterPreviewInput => true;
+    public bool OverridesSelectedGeometryPreview => true;
+    public void HandlePreviewInput(Reanimator.SystemApi api, ReanimatorPreviewContext context)
+    {
+        if (api?.PreviewRenderer == null || context == null) return;
+        if (api.PreviewRenderer.HandleSoftContourPointInput(context))
+            api.Repaint();
+    }
+
+    public void DrawPreviewOverlay(Reanimator.SystemApi api, ReanimatorPreviewContext context)
+    {
+        api?.PreviewRenderer?.DrawSoftContour(context?.Coordinates);
+    }
+
+    private static void DrawPanel(Reanimator.SystemApi api, float availableHeight)
+    {
+        UnityEditor.EditorGUILayout.LabelField("Soft Contour", UnityEditor.EditorStyles.boldLabel);
+        if (api?.PreviewRenderer == null || !api.PreviewRenderer.HasSoftContourSelection())
+            UnityEditor.EditorGUILayout.HelpBox("Select a sprite and a bone.", UnityEditor.MessageType.Info);
+        else if (UnityEngine.GUILayout.Button(api.PreviewRenderer.SelectingSoftContourPoints
+                     ? "Select Points [ON]" : "Select Points"))
+        {
+            api.PreviewRenderer.SelectingSoftContourPoints = !api.PreviewRenderer.SelectingSoftContourPoints;
+            api.Repaint();
+        }
+        if (api?.PreviewRenderer == null || !api.PreviewRenderer.HasSoftContourSelection() ||
+            !api.PreviewRenderer.HasSelectedSoftContourPoints) return;
+        var renderer = api.PreviewRenderer;
+        float depth = UnityEditor.EditorGUILayout.Slider("Depth", renderer.SoftContourDepth, 0.01f, 0.99f);
+        if (depth != renderer.SoftContourDepth)
+        {
+            renderer.SoftContourDepth = depth;
+            api.Repaint();
+        }
+        if (UnityEngine.GUILayout.Button("SC"))
+        {
+            renderer.ApplySoftContour(out var message);
+            api.ShowNotification(message);
+            api.Repaint();
+        }
+    }
+}
+
 internal sealed class ReanimatorRetriangulateGeometryModule : ReanimatorActionModule
 {
     public ReanimatorRetriangulateGeometryModule()

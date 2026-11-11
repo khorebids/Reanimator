@@ -35,6 +35,15 @@ internal sealed class ReanimatorPsdSpritePositionPostprocessor : AssetPostproces
         // Reanimator writes PSD sprite metadata only from explicit editor actions.
         // Passive import callbacks can run after Unity updates SourceAssetDB and
         // must not rewrite .meta from stale CharacterData.
+        foreach (var path in importedAssets)
+        {
+            if (path.EndsWith(".psd", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith(".psb", StringComparison.OrdinalIgnoreCase))
+            {
+                // Re-register loaded skins so cached native views follow the new sprite buffers.
+                using var skins = new PsdLayerPreviewRenderer.ApplySpriteSkinSuspension(path);
+            }
+        }
     }
 
 }

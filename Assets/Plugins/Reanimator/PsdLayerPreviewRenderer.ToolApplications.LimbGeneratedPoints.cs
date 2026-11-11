@@ -86,7 +86,8 @@ public partial class PsdLayerPreviewRenderer
         LayerVertexData targetData,
         IReadOnlyList<Vector2> contourPointsDoc,
         float radius,
-        bool removeInnerVertices)
+        bool removeInnerVertices,
+        Vector2? explicitCenter = null)
     {
         if (sourceData == null || targetData == null ||
             sourceData.vertices == null || sourceData.vertices.Length < 3 ||
@@ -104,7 +105,7 @@ public partial class PsdLayerPreviewRenderer
         var removeMask = ReanimatorRadiusCullAlgorithms.BuildRemoveMask(
             sourceData.vertices,
             contourMask,
-            radiusCullCenterDoc,
+            explicitCenter ?? radiusCullCenterDoc,
             radius,
             true,
             removeInnerVertices,

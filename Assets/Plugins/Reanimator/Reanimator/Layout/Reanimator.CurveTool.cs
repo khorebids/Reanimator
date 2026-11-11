@@ -6,7 +6,7 @@ public partial class Reanimator : EditorWindow
 {
     private int analizeCurveDraggedPointIndex = -1;
     private int analizeCurveDragControlId;
-    private bool analizeCurveGraphResizing;
+    private static readonly int CurveGraphResizeHint = "WeightCurveGraphResize".GetHashCode();
     private float analizeCurveGraphResizeStartHeight;
     private float analizeCurveGraphResizeStartMouseY;
 
@@ -50,14 +50,28 @@ public partial class Reanimator : EditorWindow
 
             DrawCurveSelectionEdgeControls(hasSelection);
 
-            var maxGraphHeight = Mathf.Max(120f, availableHeight - 178f);
-            analizeCurveGraphHeight = Mathf.Clamp(analizeCurveGraphHeight, 120f, maxGraphHeight);
-            var graphRect = GUILayoutUtility.GetRect(10f, analizeCurveGraphHeight, GUILayout.ExpandWidth(true));
+            var selectedPair = 0;
+            var pairOptions = hasGraph ? layerPreviewRenderer.GetCurveBonePairOptions(out selectedPair) : null;
+            var showPairPicker = pairOptions != null && pairOptions.Length == 3;
+            var maxGraphHeight = Mathf.Max(120f, availableHeight - (showPairPicker ? 230f : 208f));
+            var graphHeight = Mathf.Clamp(analizeCurveGraphHeight, 120f, maxGraphHeight);
+            var resizeHandleRect = GUILayoutUtility.GetRect(10f, 12f, GUILayout.ExpandWidth(true));
+            DrawAnalizeCurveResizeHandle(resizeHandleRect);
+            HandleAnalizeCurveGraphResize(resizeHandleRect, graphHeight, maxGraphHeight);
+
+            var graphRect = GUILayoutUtility.GetRect(10f, graphHeight, GUILayout.ExpandWidth(true));
             DrawCurveGraph(graphRect);
 
-            var resizeHandleRect = GUILayoutUtility.GetRect(10f, 6f, GUILayout.ExpandWidth(true));
-            DrawAnalizeCurveResizeHandle(resizeHandleRect);
-            HandleAnalizeCurveGraphResize(resizeHandleRect, maxGraphHeight);
+            if (showPairPicker)
+            {
+                var pair = GUILayout.Toolbar(selectedPair, pairOptions, GUILayout.Height(20f));
+                if (pair != selectedPair)
+                {
+                    ResetAnalizeCurveGraphDrag();
+                    layerPreviewRenderer.SelectCurveBonePair(pair);
+                    Repaint();
+                }
+            }
 
             GUILayout.Space(8f);
             using (new EditorGUILayout.HorizontalScope())
@@ -148,42 +162,37 @@ public partial class Reanimator : EditorWindow
 
     private static void DrawAnalizeCurveResizeHandle(Rect rect)
     {
-        EditorGUI.DrawRect(rect, new Color(0.18f, 0.18f, 0.18f, 1f));
-        var lineRect = new Rect(rect.x + 10f, rect.center.y - 1f, Mathf.Max(0f, rect.width - 20f), 2f);
-        EditorGUI.DrawRect(lineRect, new Color(0.38f, 0.38f, 0.38f, 1f));
         EditorGUIUtility.AddCursorRect(rect, MouseCursor.ResizeVertical);
+        var grip = new Rect(rect.center.x - 14f, rect.center.y - 1f, 28f, 2f);
+        EditorGUI.DrawRect(grip, new Color(0.65f, 0.65f, 0.65f, 1f));
+        GUI.Label(rect, new GUIContent(string.Empty, "Drag up to make the WeightCurve graph taller."));
     }
 
-    private void HandleAnalizeCurveGraphResize(Rect handleRect, float maxGraphHeight)
+    private void HandleAnalizeCurveGraphResize(Rect handleRect, float graphHeight, float maxGraphHeight)
     {
         var e = Event.current;
-        if (e == null)
-            return;
-
-        if (e.type == EventType.MouseDown && e.button == 0 && handleRect.Contains(e.mousePosition))
+        var controlId = GUIUtility.GetControlID(CurveGraphResizeHint, FocusType.Passive, handleRect);
+        switch (e.GetTypeForControl(controlId))
         {
-            analizeCurveGraphResizing = true;
-            analizeCurveGraphResizeStartHeight = analizeCurveGraphHeight;
-            analizeCurveGraphResizeStartMouseY = e.mousePosition.y;
-            e.Use();
-            return;
+            case EventType.MouseDown when e.button == 0 && handleRect.Contains(e.mousePosition):
+                GUIUtility.hotControl = controlId;
+                analizeCurveGraphResizeStartHeight = graphHeight;
+                analizeCurveGraphResizeStartMouseY = GUIUtility.GUIToScreenPoint(e.mousePosition).y;
+                e.Use();
+                break;
+            case EventType.MouseDrag when GUIUtility.hotControl == controlId:
+                var mouseY = GUIUtility.GUIToScreenPoint(e.mousePosition).y;
+                analizeCurveGraphHeight = Mathf.Clamp(
+                    analizeCurveGraphResizeStartHeight + analizeCurveGraphResizeStartMouseY - mouseY,
+                    120f, maxGraphHeight);
+                e.Use();
+                Repaint();
+                break;
+            case EventType.MouseUp when e.button == 0 && GUIUtility.hotControl == controlId:
+                GUIUtility.hotControl = 0;
+                e.Use();
+                break;
         }
-
-        if (e.type == EventType.MouseUp && e.button == 0)
-        {
-            analizeCurveGraphResizing = false;
-            return;
-        }
-
-        if (e.type != EventType.MouseDrag || !analizeCurveGraphResizing)
-            return;
-
-        analizeCurveGraphHeight = Mathf.Clamp(
-            analizeCurveGraphResizeStartHeight + (e.mousePosition.y - analizeCurveGraphResizeStartMouseY),
-            120f,
-            maxGraphHeight);
-        e.Use();
-        Repaint();
     }
 
     private void DrawCurveGraph(Rect rect)
@@ -249,7 +258,7 @@ public partial class Reanimator : EditorWindow
     private bool HandleCurveGraphInput(Rect rect, PsdLayerPreviewRenderer.CurveGraphData graphData)
     {
         var e = Event.current;
-        if (e == null || layerPreviewRenderer == null || e.alt || e.button != 0 || analizeCurveGraphResizing)
+        if (e == null || layerPreviewRenderer == null || e.alt || e.button != 0)
             return false;
 
         var points = BuildCurveGraphPoints(rect, graphData.childSamples);

@@ -171,10 +171,80 @@ internal static partial class ReanimatorSelfTests
             "Repeated redraws of the same edge count should reuse the index array.");
     }
 
+    private static void SpriteDirtyStateSurvivesUnitySerialization()
+    {
+        var renderer = new PsdLayerPreviewRenderer();
+        var layer = BuildLayer("undo-sprite", 205, Vector2.zero);
+        layer.spriteGuid = "cccccccccccccccccccccccccccccccc";
+        layer.sourceRect = new Rect(0f, 0f, 32f, 48f);
+        SetPrivateField(renderer, "layerInfos", new List<PsdLayerPreviewRenderer.LayerInfo> { layer });
+
+        var before = JsonUtility.ToJson(renderer);
+        AssertTrue(renderer.SetLayerSpriteRect(layer, new Rect(0f, 0f, 28f, 48f)), "Sprite edit must change its rect.");
+        var after = JsonUtility.ToJson(renderer);
+
+        JsonUtility.FromJsonOverwrite(before, renderer);
+        AssertFalse((bool)InvokePrivateMethod(renderer, "HasDirtyLayerSpriteState"), "Undo must clear the restored dirty state.");
+        JsonUtility.FromJsonOverwrite(after, renderer);
+        AssertTrue((bool)InvokePrivateMethod(renderer, "HasDirtyLayerSpriteState"), "Redo must restore the dirty state needed by Apply.");
+    }
+
+    private static void RestorePoseCapturesPreviousBoneTransform()
+    {
+        var renderer = new PsdLayerPreviewRenderer();
+        var bone = new PsdLayerPreviewRenderer.BoneInfo
+        {
+            parentId = -1,
+            position = new Vector2(4f, 5f),
+            rotation = Quaternion.identity,
+            initialRotation = Quaternion.identity
+        };
+        var original = bone.position;
+        SetPrivateField(renderer, "bones", new List<PsdLayerPreviewRenderer.BoneInfo> { bone });
+        var recorded = 0;
+        renderer.UndoRequest = label =>
+        {
+            AssertEqual("Restore Pose", label, "Restore should add one labeled Unity Undo entry.");
+            AssertEqual(original, renderer.Bones[0].position, "Undo must capture the pose before restoring it.");
+            recorded++;
+        };
+
+        AssertTrue(renderer.RestorePose(), "Restore must change the bone to its initial pose.");
+        AssertEqual(Vector2.zero, renderer.Bones[0].position, "Restore should apply the initial pose.");
+        AssertEqual(1, recorded, "Restore must record exactly one snapshot.");
+    }
+
+    private static void GeometrySnapshotSupersedesDeferredElbowPoints()
+    {
+        const string path = "Assets/undo-elbow.psd";
+        var renderer = new PsdLayerPreviewRenderer();
+        var layer = BuildLayer("elbow", 204, Vector2.zero);
+        var selectionKey = (string)InvokePrivateMethod(renderer, "BuildSelectionKey", layer);
+        var stableKey = (string)InvokePrivateMethod(renderer, "BuildKey", layer.name, layer.layerId);
+        var data = CreatePrivateNestedInstance(renderer, "LayerVertexData");
+        SetPrivateField(data, "layer", layer);
+        SetPrivateField(data, "vertices", new[] { Vector2.zero, Vector2.right, Vector2.up });
+        SetPrivateField(data, "vertexUvs", new[] { Vector2.zero, Vector2.right, Vector2.up });
+        SetPrivateField(data, "triangles", new[] { 0, 1, 2 });
+        InvokePrivateMethod(renderer, "TryAddAppliedVertex", path, selectionKey, stableKey, Vector2.one, false);
+        InvokePrivateMethod(renderer, "TryAddAppliedVertex", path, "other-selection", "other-layer", Vector2.one, false);
+
+        InvokePrivateMethod(renderer, "UpsertAutoGeometryPatch", path, selectionKey, stableKey, data, false, null);
+
+        AssertEqual(1, GetPrivateListCount(renderer, "autoGeometryPatches"), "Geometry must have a snapshot for Redo.");
+        AssertFalse((bool)InvokePrivateMethod(renderer, "HasAppliedVerticesForLayer", path, selectionKey, stableKey),
+            "Redo must not reinsert superseded Elbow points into the snapshot.");
+        AssertTrue((bool)InvokePrivateMethod(renderer, "HasAppliedVerticesForLayer", path, "other-selection", "other-layer"),
+            "A geometry edit must preserve deferred points on a different layer.");
+    }
+
     private static List<Case> BuildCases()
     {
         return new List<Case>
         {
+            new Case("Geometry snapshot supersedes deferred Elbow points", GeometrySnapshotSupersedesDeferredElbowPoints),
+            new Case("Restore Pose captures previous bone transform", RestorePoseCapturesPreviousBoneTransform),
+            new Case("Sprite dirty state survives Unity serialization", SpriteDirtyStateSurvivesUnitySerialization),
             new Case("Preview lines exclude stale screen coordinates", PreviewLinesExcludeStaleScreenCoordinates),
             new Case("Auto Skeleton scopes outputs and detects Comfy errors", AutoSkeletonScopesOutputsAndDetectsErrors),
             new Case("Apply restores persisted PSD importer metadata", ApplyRestoresPersistedImporterMetadata),
@@ -235,6 +305,7 @@ internal static partial class ReanimatorSelfTests
             new Case("Auto limb guide follows the two-bone bisector normal", AutoLimbGuideFollowsTwoBoneBisectorNormal),
             new Case("Limb apply with CircleClean creates pending geometry patch", LimbApplyWithCircleCleanCreatesPendingGeometryPatch),
             new Case("Limb apply falls back when CircleClean cannot clean", LimbApplyFallsBackWhenCircleCleanCannotClean),
+            new Case("WA resolves generated PSD importer IDs", PsdArmNamesResolveGeneratedImporterIds),
             new Case("Rebuild meta algorithms build stable hierarchy keys", RebuildMetaAlgorithmsBuildStableHierarchyKeys),
             new Case("Rebuild meta algorithms choose meta sprite positions safely", RebuildMetaAlgorithmsChooseMetaSpritePositionsSafely),
             new Case("Rebuild meta algorithms prefer visual sprite position over character part bounds", RebuildMetaAlgorithmsPreferVisualSpritePositionOverCharacterPartBounds),

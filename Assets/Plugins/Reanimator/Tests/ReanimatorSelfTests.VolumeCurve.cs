@@ -409,8 +409,8 @@ internal static partial class ReanimatorSelfTests
 
         AssertTrue(renderer.ApplySelectedVolumeCurve(out var error), $"Volume apply should succeed. Error={error}");
         AssertTrue(renderer.HasPendingChanges, "Volume apply should mark renderer pending changes for Apply/reimport.");
-        AssertTrue(GetPrivateField<HashSet<string>>(renderer, "dirtyLayerStableKeys").Contains(selectedStableKey), "Volume apply should dirty selected layer stable key.");
-        AssertFalse(GetPrivateField<HashSet<string>>(renderer, "dirtyLayerStableKeys").Contains((string)InvokePrivateMethod(renderer, "BuildKey", other.name, other.layerId)), "Volume apply should not dirty unrelated layer.");
+        AssertTrue(GetPrivateField<List<string>>(renderer, "dirtyLayerStableKeys").Contains(selectedStableKey), "Volume apply should dirty selected layer stable key.");
+        AssertFalse(GetPrivateField<List<string>>(renderer, "dirtyLayerStableKeys").Contains((string)InvokePrivateMethod(renderer, "BuildKey", other.name, other.layerId)), "Volume apply should not dirty unrelated layer.");
         AssertFloat(1f, GetWeight(GetPrivateField<BoneWeight[]>(selectedData, "boneWeights")[1], 1), 0.0001f, "Selected layer center vertex should receive target bone.");
         AssertFloat(0f, GetWeight(GetPrivateField<BoneWeight[]>(otherData, "boneWeights")[1], 1), 0.0001f, "Other layer weights should stay untouched.");
     }

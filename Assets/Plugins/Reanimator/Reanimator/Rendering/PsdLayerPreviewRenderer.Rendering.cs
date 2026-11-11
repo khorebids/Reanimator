@@ -133,7 +133,7 @@ public partial class PsdLayerPreviewRenderer
         }
     }
 
-    private void DrawVertices(PsdCoordinateSpace coordinateMapper, float alpha)
+    private void DrawVertices(PsdCoordinateSpace coordinateMapper, float alpha, bool drawLimbGuides)
     {
         if (alpha <= 0f || string.IsNullOrEmpty(selectedLayerSelectionKey))
             return;
@@ -165,7 +165,8 @@ public partial class PsdLayerPreviewRenderer
         var toCanvasVertex = CreateLayerVertexToViewMapper(coordinateMapper, data, drawVertices);
         var layerStableKey = BuildKey(data.layer.name, data.layer.layerId);
         UpdateElbowLinesForLayer(selectedLayerSelectionKey, layerStableKey, data);
-        UpdateLimbLinesForLayer(selectedLayerSelectionKey, layerStableKey, data);
+        if (drawLimbGuides)
+            UpdateLimbLinesForLayer(selectedLayerSelectionKey, layerStableKey, data);
 
         var vertexCount = drawVertices.Length;
         DrawBoneInfluenceOnGeometryTriangles(toCanvasVertex, drawVertices, data, alpha);
@@ -296,7 +297,8 @@ public partial class PsdLayerPreviewRenderer
         }
 
         DrawElbowContourPoints(toCanvasVertex, selectedLayerSelectionKey, layerStableKey, data, pointColor, innerLineColor);
-        DrawLimbContourPoints(toCanvasVertex, selectedLayerSelectionKey, layerStableKey, data, pointColor, innerLineColor);
+        if (drawLimbGuides)
+            DrawLimbContourPoints(toCanvasVertex, selectedLayerSelectionKey, layerStableKey, data, pointColor, innerLineColor);
         DrawAppliedElbowVertices(toCanvasVertex, selectedLayerSelectionKey, layerStableKey, data, drawVertices, pointColor, innerLineColor);
 
         Handles.color = prev;

@@ -10,7 +10,6 @@ using UnityEditor.U2D.Sprites;
 using UnityEngine;
 using UnityEngine.U2D;
 using UnityEngine.U2D.Animation;
-using UnityEngine.U2D.IK;
 
 public static class SpriteSkinPrefabBoneAssignerWindow
 {
@@ -790,7 +789,7 @@ public static class SpriteSkinPrefabBoneAssignerWindow
             return stats;
         }
 
-        Undo.RegisterCompleteObjectUndo(importer, "Rename PSD Sprite Bones");
+        ReanimatorAssetMetaPersistence.RegisterImporterUndo(importer, "Rename PSD Sprite Bones");
 
         var characterBoneIndexByName = BuildCharacterBoneIndexByName(characterBones);
         var partIndexBySpriteId = BuildCharacterPartIndexBySpriteId(characterData.parts);
@@ -1623,7 +1622,8 @@ internal static class ReanimatorPrefabCooker
                 ResolveImporterBonePositionScale(sprites[0], characterLayout),
                 characterLayout.DocumentPivotPixels);
             result.Bones = createdBones.Length;
-            AddIkManagerIfAvailable(rigsRoot, createdBones, ref result);
+            result.IkSolvers = ConfigureReaniIK(rigsRoot, createdBones);
+            result.IkManagerAdded = true;
 
             var spriteSkins = prefabRoot.GetComponentsInChildren<SpriteSkin>(true);
             var assignStats = SpriteSkinPrefabBoneAssignerWindow.AssignBonesToCreatedSkeleton(spriteSkins, createdBones);
@@ -1956,16 +1956,6 @@ internal static class ReanimatorPrefabCooker
         return spriteBonePosition * positionScale;
     }
 
-    private static void AddIkManagerIfAvailable(Transform rigsRoot, IReadOnlyList<Transform> createdBones, ref CookResult result)
-    {
-        if (rigsRoot == null)
-            return;
-
-        var manager = rigsRoot.gameObject.AddComponent<IKManager2D>();
-        result.IkManagerAdded = true;
-        result.IkSolvers = AddLimbSolvers(manager, rigsRoot, createdBones);
-    }
-
     private sealed class CharacterLayout
     {
         public readonly Dictionary<string, RectInt> PartByGuid =
@@ -1974,52 +1964,61 @@ internal static class ReanimatorPrefabCooker
         public Vector2 DocumentPivotPixels;
     }
 
-    internal static int AddLimbSolvers(IKManager2D manager, Transform rigsRoot, IReadOnlyList<Transform> createdBones)
+    internal static int ConfigureReaniIK(Transform rigsRoot, IReadOnlyList<Transform> createdBones)
     {
-        if (manager == null || rigsRoot == null || createdBones == null)
-            return 0;
+        var prefabRoot = rigsRoot.root.gameObject;
+        var rig = prefabRoot.GetComponent<ReaniIK>();
+        if (!rig) rig = prefabRoot.AddComponent<ReaniIK>();
 
-        var created = 0;
-        created += AddLimbSolver(manager, rigsRoot, createdBones, "l_foot", "l_leg_limb", "l_foot_target", true) ? 1 : 0;
-        created += AddLimbSolver(manager, rigsRoot, createdBones, "r_foot", "r_leg_limb", "r_foot_target", true) ? 1 : 0;
-        created += AddLimbSolver(manager, rigsRoot, createdBones, "l_hand", "l_arm_limb", "l_hand_target", false) ? 1 : 0;
-        created += AddLimbSolver(manager, rigsRoot, createdBones, "r_hand", "r_arm_limb", "r_hand_target", false) ? 1 : 0;
-        created += AddLimbSolver(manager, rigsRoot, createdBones, "l_hand_2", "l_arm_2_limb", "l_hand_2_target", false) ? 1 : 0;
-        created += AddLimbSolver(manager, rigsRoot, createdBones, "r_hand_2", "r_arm_2_limb", "r_hand_2_target", false) ? 1 : 0;
-        return created;
+        var spine = FindCreatedBone(createdBones, "spine");
+        var count = 0;
+        count += ConfigureLimb(rig.leftLeg, "l_foot", true) ? 1 : 0;
+        count += ConfigureLimb(rig.rightLeg, "r_foot", true) ? 1 : 0;
+        count += ConfigureLimb(rig.leftArm, "l_hand", false) ? 1 : 0;
+        count += ConfigureLimb(rig.rightArm, "r_hand", false) ? 1 : 0;
+        count += ConfigureLimb(rig.leftArm2, "l_hand_2", false) ? 1 : 0;
+        count += ConfigureLimb(rig.rightArm2, "r_hand_2", false) ? 1 : 0;
+
+        rig.breasts.bones = ExistingBones(
+            FindCreatedBone(createdBones, "nipple_l") ?? FindCreatedBone(createdBones, "l_nipple"),
+            FindCreatedBone(createdBones, "nipple_r") ?? FindCreatedBone(createdBones, "r_nipple"));
+        rig.softContour.bones = createdBones.Where(ReaniIK.IsSoftContourBone).ToArray();
+        rig.frontHair.bones = ExistingBones(FindCreatedBone(createdBones, "front_hair"));
+        rig.backHair.bones = ExistingBones(FindCreatedBone(createdBones, "back_hair"));
+        rig.breathing.belly = FindCreatedBone(createdBones, "belly");
+        rig.breathing.spine = spine;
+        rig.breathing.neck.bone = FindCreatedBone(createdBones, "neck");
+        rig.breathing.leftArm.bone = rig.leftArm.upper;
+        rig.breathing.rightArm.bone = rig.rightArm.upper;
+        rig.breathing.enabled = rig.breathing.belly && spine;
+        return count;
+
+        bool ConfigureLimb(ReaniIK.Limb limb, string name, bool offsetDown)
+        {
+            var effector = FindCreatedBone(createdBones, name);
+            if (!effector || !effector.parent || !effector.parent.parent) return false;
+            string targetName = name + "_target";
+            var target = rigsRoot.Find(targetName);
+            if (!target)
+            {
+                target = CreateChild(rigsRoot, targetName);
+                Vector3 offset = offsetDown ? Vector3.down * ResolveFootIkTargetOffset(effector) : Vector3.zero;
+                target.SetPositionAndRotation(effector.position + offset, effector.rotation);
+            }
+
+            limb.upper = effector.parent.parent;
+            limb.lower = effector.parent;
+            limb.tip = effector;
+            limb.target = target;
+            limb.softnessSource = spine;
+            limb.CaptureDefaultPose();
+            return true;
+        }
     }
 
-    private static bool AddLimbSolver(
-        IKManager2D manager,
-        Transform rigsRoot,
-        IReadOnlyList<Transform> createdBones,
-        string effectorBoneName,
-        string solverName,
-        string targetName,
-        bool offsetTargetDown)
+    private static Transform[] ExistingBones(params Transform[] bones)
     {
-        var effector = FindCreatedBone(createdBones, effectorBoneName);
-        if (effector == null || effector.parent == null || effector.parent.parent == null)
-            return false;
-
-        var target = CreateChild(rigsRoot, targetName);
-        target.position = effector.position;
-        if (offsetTargetDown)
-            target.position += Vector3.down * ResolveFootIkTargetOffset(effector);
-        target.rotation = effector.rotation;
-
-        var solverTransform = CreateChild(rigsRoot, solverName);
-        var solver = solverTransform.gameObject.AddComponent<LimbSolver2D>();
-        solver.weight = 1f;
-
-        var chain = solver.GetChain(0);
-        chain.effector = effector;
-        chain.target = target;
-        chain.transformCount = 3;
-        chain.Initialize();
-        solver.Initialize();
-        manager.AddSolver(solver);
-        return true;
+        return Array.FindAll(bones, bone => bone != null);
     }
 
     private static Transform FindCreatedBone(IReadOnlyList<Transform> createdBones, string name)

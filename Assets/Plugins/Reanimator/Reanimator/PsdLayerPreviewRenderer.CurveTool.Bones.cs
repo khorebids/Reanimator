@@ -6,6 +6,64 @@ using UnityEngine;
 
 public partial class PsdLayerPreviewRenderer
 {
+    public string[] GetCurveBonePairOptions(out int selected)
+    {
+        var pairs = BuildCurveBonePairOptions(out selected);
+        return pairs.ConvertAll(pair => pair.label).ToArray();
+    }
+
+    public void SelectCurveBonePair(int index)
+    {
+        var pairs = BuildCurveBonePairOptions(out var selected);
+        if (index < 0 || index >= pairs.Count || index == selected)
+            return;
+
+        RegisterUndo("Select WeightCurve Bone Pair");
+        ResetCurveGraphToCurrentWeights();
+        curveSecondBoneSelectionSignature = BuildCurveSelectionSignature();
+        curveSelectedFirstSpriteBone = pairs[index].first;
+        curveSelectedSecondSpriteBone = pairs[index].second;
+    }
+
+    private List<(int first, int second, string label)> BuildCurveBonePairOptions(out int selected)
+    {
+        selected = -1;
+        var pairs = new List<(int first, int second, string label)>();
+        if (!TryGetCurveGraphContext(out var data, out _, out _, out _, out var vertices,
+                out var currentFirst, out var currentSecond, out _, out _, out _))
+            return pairs;
+
+        var candidates = BuildCurveBoneCandidates(data, vertices);
+        candidates.RemoveAll(candidate => candidate.Key < 0 || candidate.Key >= data.spriteBoneToRendererBone.Length ||
+            data.spriteBoneToRendererBone[candidate.Key] < 0);
+        if (candidates.Count != 3)
+            return pairs;
+
+        for (var first = 0; first < candidates.Count - 1; first++)
+        {
+            for (var second = first + 1; second < candidates.Count; second++)
+            {
+                var a = candidates[first].Key;
+                var b = candidates[second].Key;
+                if ((a == currentFirst && b == currentSecond) || (b == currentFirst && a == currentSecond))
+                {
+                    selected = pairs.Count;
+                    a = currentFirst;
+                    b = currentSecond;
+                }
+                pairs.Add((a, b, GetName(a) + " / " + GetName(b)));
+            }
+        }
+
+        return pairs;
+
+        string GetName(int spriteBone)
+        {
+            var rendererBone = data.spriteBoneToRendererBone[spriteBone];
+            return rendererBone < bones.Count ? bones[rendererBone]?.name ?? "Bone " + spriteBone : "Bone " + spriteBone;
+        }
+    }
+
     private bool TryResolveCurveBonePair(
         LayerVertexData data,
         IReadOnlyList<int> vertexIndices,

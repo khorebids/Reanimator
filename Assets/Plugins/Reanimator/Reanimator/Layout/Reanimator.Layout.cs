@@ -18,7 +18,7 @@ public partial class Reanimator : EditorWindow
         UpdateWindowEventOptions();
         EnsureWeightArrays();
         EnsureDefaultToolMode();
-        if (TryGetExternalBlockingProgress(out _, out _, out _))
+        if (pendingApplyPath != null || TryGetExternalBlockingProgress(out _, out _, out _))
             HandleExternalBlockingProgressInput();
 
         using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
@@ -42,7 +42,7 @@ public partial class Reanimator : EditorWindow
                 if (GUILayout.Button("Revert", EditorStyles.toolbarButton, GUILayout.Width(55f)))
                     RevertChanges();
                 if (GUILayout.Button("Apply", EditorStyles.toolbarButton, GUILayout.Width(55f)))
-                    ApplyChanges();
+                    QueueApplyChanges();
             }
         }
 
@@ -98,7 +98,8 @@ public partial class Reanimator : EditorWindow
             var suppressNavigatorForCurve =
                 !isEmptyPreview &&
                 previewEvent != null &&
-                ((bottomToolMode == ReanimatorToolMode.WeightSlider &&
+                (((bottomToolMode == ReanimatorToolMode.WeightSlider ||
+                   (bottomToolMode == ReanimatorToolMode.SoftContour && layerPreviewRenderer.SelectingSoftContourPoints)) &&
                   !previewEvent.alt &&
                   previewEvent.button == 0 &&
                   (previewEvent.type == EventType.MouseDown ||
@@ -189,6 +190,7 @@ public partial class Reanimator : EditorWindow
                     previewVertexInfluenceVisibilityMuted,
                     "Restore vertex and influence visibility",
                     "Hide vertex and influence visibility");
+                DrawPreviewSelectionLabel(clippedPreviewRect, vertexInfluenceVisibilityButtonRect);
             }
             GUI.EndClip();
 
@@ -207,7 +209,13 @@ public partial class Reanimator : EditorWindow
         DrawRightPanels(localRightRect);
         GUI.EndGroup();
 
-        DrawExternalBlockingProgressOverlay();
+        if (pendingApplyPath != null)
+        {
+            localPreviewRect.position += windowLayout.ContentRect.position;
+            DrawApplyProcessingOverlay(localPreviewRect);
+        }
+        else
+            DrawExternalBlockingProgressOverlay();
     }
 
     private void RevealSelectedLayerInVisibilityPanelIfChanged(string previousSelectionKey)
@@ -224,6 +232,36 @@ public partial class Reanimator : EditorWindow
         visibilityBone = false;
         visibilityAutoScrolledLayerSelectionKey = string.Empty;
         Repaint();
+    }
+
+    private void DrawPreviewSelectionLabel(Rect previewRect, Rect lastButtonRect)
+    {
+        if (layerPreviewRenderer == null)
+            return;
+
+        var boneIndex = layerPreviewRenderer.SelectedBoneIndex;
+        var bones = layerPreviewRenderer.Bones;
+        var boneName = boneIndex >= 0 && boneIndex < bones.Count ? bones[boneIndex]?.name : null;
+        var spriteName = layerPreviewRenderer.TryGetSelectedLayer(out var layer) ? layer.name : null;
+        var text = $"Bone: {boneName ?? "—"}  |  Sprite: {spriteName ?? "—"}";
+
+        var x = lastButtonRect.xMax + 4f;
+        var availableWidth = previewRect.xMax - x - 4f;
+        if (availableWidth <= 0f)
+            return;
+
+        var content = new GUIContent(text, text);
+        var style = new GUIStyle(EditorStyles.miniLabel)
+        {
+            alignment = TextAnchor.MiddleLeft,
+            clipping = TextClipping.Clip,
+            padding = new RectOffset(6, 6, 0, 0),
+            normal = { textColor = Color.white }
+        };
+        var width = Mathf.Min(availableWidth, style.CalcSize(content).x);
+        var rect = new Rect(x, lastButtonRect.y, width, lastButtonRect.height);
+        EditorGUI.DrawRect(rect, new Color(0f, 0f, 0f, 0.65f));
+        GUI.Label(rect, content, style);
     }
 
     private static Rect GetPreviewToolbarButtonRect(Rect previewRect, int index)
@@ -501,6 +539,26 @@ public partial class Reanimator : EditorWindow
                 Repaint();
                 break;
         }
+    }
+
+    private void DrawApplyProcessingOverlay(Rect previewRect)
+    {
+        if (Event.current.type != EventType.Repaint)
+            return;
+
+        var center = previewRect.center;
+        var box = new Rect(center.x - 92f, center.y - 19f, 184f, 38f);
+        EditorGUI.DrawRect(box, new Color(0.13f, 0.13f, 0.13f, 0.96f));
+        var style = new GUIStyle(EditorStyles.boldLabel)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            normal = { textColor = Color.white }
+        };
+        GUI.Label(box, "Apply processing", style);
+
+        // Give the editor time to present the repaint before the synchronous import.
+        if (double.IsPositiveInfinity(pendingApplyStart))
+            pendingApplyStart = EditorApplication.timeSinceStartup + 0.08d;
     }
 
     private void DrawExternalBlockingProgressOverlay()
