@@ -90,7 +90,7 @@ public partial class PsdLayerPreviewRenderer
             radiusCullCenterDoc = ConvertPointToBaseDoc(data, cullCenterDraw);
             radiusCullHasPoint = true;
 
-            if (!TryApplyLimbWithRadiusCullPipeline(
+            if (!TryApplyLimbWithAdaptiveRadiusCull(
                     data,
                     line,
                     generatedPoints,
@@ -122,6 +122,31 @@ public partial class PsdLayerPreviewRenderer
         return true;
     }
 
+    private bool TryApplyLimbWithAdaptiveRadiusCull(
+        LayerVertexData sourceData,
+        LimbLine line,
+        IReadOnlyList<LimbGeneratedPoint> limbPoints,
+        IReadOnlyList<Vector2> contourPointsDoc,
+        float radius,
+        bool removeContourVertices,
+        bool removeInnerVertices,
+        out string error,
+        Vector2? stagedCenter = null)
+    {
+        // A guide can span most of a short sprite. Keep trying a smaller local
+        // circle when the candidate cannot leave a triangulatable contour.
+        error = null;
+        var attempts = line.hasRequiredJointAnchor ? 8 : 1;
+        for (var attempt = 0; attempt < attempts; attempt++, radius *= 0.75f)
+        {
+            if (TryApplyLimbWithRadiusCullPipeline(sourceData, line, limbPoints, contourPointsDoc,
+                    radius, removeContourVertices, removeInnerVertices, out error, stagedCenter))
+                return true;
+        }
+
+        return false;
+    }
+
     private bool TryApplyLimbWithRadiusCullPipeline(
         LayerVertexData sourceData,
         LimbLine line,
@@ -130,7 +155,8 @@ public partial class PsdLayerPreviewRenderer
         float radius,
         bool removeContourVertices,
         bool removeInnerVertices,
-        out string error)
+        out string error,
+        Vector2? stagedCenter = null)
     {
         error = null;
         if (sourceData == null)
@@ -148,7 +174,9 @@ public partial class PsdLayerPreviewRenderer
                 out var culledAllEdgePairs,
                 out var culledBoundaryEdgePairs,
                 out var culledBoneWeights,
-                out _))
+                out _,
+                explicitSource: stagedCenter.HasValue ? sourceData : null,
+                explicitCenter: stagedCenter.GetValueOrDefault()))
         {
             error = "Failed to apply CircleClean before Limb.";
             return false;
@@ -194,10 +222,11 @@ public partial class PsdLayerPreviewRenderer
                 var point = limbPoints[i];
                 var basePoint = ConvertPointToBaseDoc(sourceData, point.pointDoc);
                 var oldVertexCount = workingData.vertices != null ? workingData.vertices.Length : 0;
-                if (!InsertAppliedVertexIntoLayerData(workingData, basePoint, true))
+                var createdVertexIndex = InsertAppliedVertexIntoLayerData(workingData, basePoint, true)
+                    ? oldVertexCount
+                    : line.hasRequiredJointAnchor ? FindMatchingLimbVertex(workingData, basePoint) : -1;
+                if (createdVertexIndex < 0)
                     continue;
-
-                var createdVertexIndex = oldVertexCount;
                 if (point.type == LimbGeneratedPointType.Contour)
                 {
                     createdContourVertexIndices.Add(createdVertexIndex);
@@ -215,7 +244,7 @@ public partial class PsdLayerPreviewRenderer
             }
         }
 
-        if (!TryRebuildCulledLimbBoundary(sourceData, workingData, contourPointsDoc, radius, removeInnerVertices))
+        if (!TryRebuildCulledLimbBoundary(sourceData, workingData, contourPointsDoc, radius, removeInnerVertices, stagedCenter))
         {
             error = "Failed to rebuild Limb contour after CircleClean.";
             return false;
@@ -259,16 +288,17 @@ public partial class PsdLayerPreviewRenderer
         if (workingData.vertexUvs == null || workingData.vertexUvs.Length != workingData.vertices.Length)
             workingData.vertexUvs = BuildVertexUvsFromLayer(workingData.layer, workingData.vertices);
         EnsureBoneWeightsArraySize(workingData, workingData.vertices.Length);
-        ApplyLimbWeightsToGeometry(
-            workingData,
-            sourceData,
-            line,
-            contourPointsDoc,
-            createdContourVertexIndices,
-            createdContourSourceIndices,
-            createdCenterVertexIndices,
-            createdShiftedVertexIndices,
-            createdShiftedSourceIndices);
+        if (!stagedCenter.HasValue)
+            ApplyLimbWeightsToGeometry(
+                workingData,
+                sourceData,
+                line,
+                contourPointsDoc,
+                createdContourVertexIndices,
+                createdContourSourceIndices,
+                createdCenterVertexIndices,
+                createdShiftedVertexIndices,
+                createdShiftedSourceIndices);
         workingData.hasSkinning = workingData.spriteBoneToRendererBone != null &&
                                   workingData.bindBoneInverseMatrices != null &&
                                   workingData.boneWeights.Length == workingData.vertices.Length &&
@@ -283,8 +313,17 @@ public partial class PsdLayerPreviewRenderer
         sourceData.boundaryEdgePairs = workingData.boundaryEdgePairs;
         MarkSkinningWeightsChanged(sourceData);
 
-        MarkEditGeometryDataChanged(sourceData, line.layerSelectionKey, line.layerStableKey);
+        if (!stagedCenter.HasValue)
+            MarkEditGeometryDataChanged(sourceData, line.layerSelectionKey, line.layerStableKey);
         return true;
+    }
+
+    private static int FindMatchingLimbVertex(LayerVertexData data, Vector2 point)
+    {
+        var nearest = FindNearestVertexIndex(point, data.vertices);
+        return nearest >= 0 && (data.vertices[nearest] - point).sqrMagnitude <= 0.0001f
+            ? nearest
+            : -1;
     }
 
     private bool TryApplyLimbPointsToLayerData(
@@ -293,7 +332,8 @@ public partial class PsdLayerPreviewRenderer
         LimbLine line,
         IReadOnlyList<LimbGeneratedPoint> limbPoints,
         IReadOnlyList<Vector2> contourPointsDoc,
-        out string error)
+        out string error,
+        bool stageOnly = false)
     {
         error = null;
         if (targetData == null)
@@ -313,10 +353,12 @@ public partial class PsdLayerPreviewRenderer
             {
                 var point = limbPoints[i];
                 var oldVertexCount = targetData.vertices != null ? targetData.vertices.Length : 0;
-                if (!InsertAppliedVertexIntoLayerData(targetData, point.pointDoc))
+                var basePoint = ConvertPointToBaseDoc(sourceData, point.pointDoc);
+                var createdVertexIndex = InsertAppliedVertexIntoLayerData(targetData, basePoint, true)
+                    ? oldVertexCount
+                    : line.hasRequiredJointAnchor ? FindMatchingLimbVertex(targetData, basePoint) : -1;
+                if (createdVertexIndex < 0)
                     continue;
-
-                var createdVertexIndex = oldVertexCount;
                 if (point.type == LimbGeneratedPointType.Contour)
                 {
                     createdContourVertexIndices.Add(createdVertexIndex);
@@ -341,6 +383,12 @@ public partial class PsdLayerPreviewRenderer
         {
             error = "Limb did not add any mesh vertices.";
             return false;
+        }
+
+        if (stageOnly)
+        {
+            MarkSkinningWeightsChanged(targetData);
+            return true;
         }
 
         ApplyLimbWeightsToGeometry(

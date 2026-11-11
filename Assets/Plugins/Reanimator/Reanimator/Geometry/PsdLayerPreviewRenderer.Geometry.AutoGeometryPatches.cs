@@ -53,6 +53,11 @@ public partial class PsdLayerPreviewRenderer
         if (string.IsNullOrEmpty(normalizedPath))
             return;
         TryEnsureLayerVertexUvs(data);
+        // This snapshot supersedes deferred Elbow points for this layer.
+        // Replaying those points after the patch can change the topology again on Redo.
+        appliedElbowVertices?.RemoveAll(point => point != null &&
+            IsAssetPathMatch(point.assetPath, normalizedPath) &&
+            IsLayerMatch(point.layerSelectionKey, point.layerStableKey, selectionKey, stableKey));
         autoGeometryPatches ??= new List<AutoGeometryPatch>();
 
         for (var i = 0; i < autoGeometryPatches.Count; i++)

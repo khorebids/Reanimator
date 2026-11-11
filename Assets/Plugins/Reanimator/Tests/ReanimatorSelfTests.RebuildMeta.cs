@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -13,6 +13,20 @@ using UnityEngine.U2D.Animation;
 
 internal static partial class ReanimatorSelfTests
 {
+    private static void PsdArmNamesResolveGeneratedImporterIds()
+    {
+        var layers = new[]
+        {
+            (id: 31, name: "l_arm", guid: "left"),
+            (id: 32, name: "r_arm", guid: "right"),
+            (id: 33, name: "l_arm", guid: "duplicate")
+        };
+        AssertEqual(31, ReanimatorPsdArmNames.ResolveImporterId(layers, 0, "l_arm", "LEFT"),
+            "An arm without a source ID should resolve by sprite GUID.");
+        AssertEqual(32, ReanimatorPsdArmNames.ResolveImporterId(layers, 0, "r_arm", null),
+            "An arm without a source ID or GUID should resolve by its unique name.");
+    }
+
     private static void RebuildMetaAlgorithmsBuildStableHierarchyKeys()
     {
         AssertEqual("G:3:17", ReanimatorRebuildMetaAlgorithms.BuildLayerHierarchyKey(true, 3, "Group", 17), "Group hierarchy key should prefer layer id.");

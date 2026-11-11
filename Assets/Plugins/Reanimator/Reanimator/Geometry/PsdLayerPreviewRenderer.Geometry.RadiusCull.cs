@@ -193,7 +193,9 @@ public partial class PsdLayerPreviewRenderer
         float jointCPairOffset = 0f,
         int jointLongPoints = 0,
         float jointStartLongPointsOffset = 0f,
-        float jointEndLongPointsOffset = 0f)
+        float jointEndLongPointsOffset = 0f,
+        LayerVertexData explicitSource = null,
+        Vector2 explicitCenter = default)
     {
         previewVertices = Array.Empty<Vector2>();
         previewTriangles = Array.Empty<int>();
@@ -208,9 +210,8 @@ public partial class PsdLayerPreviewRenderer
         var applyCull = removeContourVertices || removeInnerVertices;
         if (!applyCull && !includeJointContourIntersections)
             return false;
-        if (!radiusCullHasPoint)
-            return false;
-        if (!TryGetRadiusCullLayerData(out var data, out _, out _) || data == null)
+        var data = explicitSource;
+        if (data == null && (!radiusCullHasPoint || !TryGetRadiusCullLayerData(out data, out _, out _) || data == null))
             return false;
         if (data.vertices == null || data.vertices.Length < 3)
             return false;
@@ -227,7 +228,7 @@ public partial class PsdLayerPreviewRenderer
         if (CountTrue(contourMask) < 3)
             return false;
 
-        var centerDoc = radiusCullCenterDoc;
+        var centerDoc = explicitSource != null ? explicitCenter : radiusCullCenterDoc;
         LayerVertexData previewData;
 
         if (applyCull)

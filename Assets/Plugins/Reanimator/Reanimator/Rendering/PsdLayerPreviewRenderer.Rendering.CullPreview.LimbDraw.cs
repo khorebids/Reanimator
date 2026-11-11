@@ -101,7 +101,7 @@ public partial class PsdLayerPreviewRenderer
         if (edgeWrite > 1)
         {
             Handles.color = innerLineColor;
-            Handles.DrawLines(vertexEdgeSegments);
+            DrawWrittenSegments(vertexEdgeSegments, edgeWrite);
         }
 
         var visibleBoundaryPairs = Mathf.Clamp(cache.visibleBoundaryPairCount, 0, cache.totalBoundaryPairCount);
@@ -119,7 +119,7 @@ public partial class PsdLayerPreviewRenderer
         if (boundaryWrite > 1)
         {
             Handles.color = boundaryLineColor;
-            Handles.DrawLines(vertexBoundarySegments);
+            DrawWrittenSegments(vertexBoundarySegments, boundaryWrite);
             DrawShiftedSegments(vertexBoundarySegments, boundaryWrite, ref vertexBoundarySegmentsShifted, new Vector2(thickOffset, 0f), boundaryLineColor);
             DrawShiftedSegments(vertexBoundarySegments, boundaryWrite, ref vertexBoundarySegmentsShifted, new Vector2(0f, thickOffset), boundaryLineColor);
         }
@@ -138,7 +138,7 @@ public partial class PsdLayerPreviewRenderer
         if (pointWrite > 1)
         {
             Handles.color = pointColor;
-            Handles.DrawLines(vertexPointSegments);
+            DrawWrittenSegments(vertexPointSegments, pointWrite);
         }
 
         Handles.color = prev;

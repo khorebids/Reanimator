@@ -24,6 +24,13 @@ public partial class PsdLayerPreviewRenderer
     {
         repaired = false;
         error = null;
+        // Changes to alpha can alter trimmed layer rectangles without resizing the document.
+        // Only a measured document resize authorizes an automatic geometry rescale.
+        if (previousDocumentSize.x <= 0 || previousDocumentSize.y <= 0 ||
+            currentDocumentSize.x <= 0 || currentDocumentSize.y <= 0 ||
+            previousDocumentSize == currentDocumentSize)
+            return true;
+
         var layerData = GetPsdLayerData(assetPath);
         var mosaicPositionBySpriteGuid = BuildPsdLayerMosaicPositionBySpriteGuid(new SerializedObject(importer));
         var hasUniformLayerResize = TryDetectUniformPsdLayerResize(
@@ -35,6 +42,11 @@ public partial class PsdLayerPreviewRenderer
             out var comparableLayers);
         if (!ReanimatorAssetChangeAlgorithms.ShouldAutoRepairPsdImporterState(hasPendingChanges, hasUniformLayerResize))
             return true;
+        var documentScale = ReanimatorAssetChangeAlgorithms.CalculatePsdDocumentResizeScale(
+            previousDocumentSize, currentDocumentSize);
+        if (Mathf.Abs(detectedScale.x - documentScale.x) > 0.02f ||
+            Mathf.Abs(detectedScale.y - documentScale.y) > 0.02f)
+            return true;
 
         if (importer == null)
         {
@@ -44,7 +56,7 @@ public partial class PsdLayerPreviewRenderer
 
         try
         {
-            Undo.RegisterCompleteObjectUndo(importer, "Auto Rescale PSD Geometry");
+            ReanimatorAssetMetaPersistence.RegisterImporterUndo(importer, "Auto Rescale PSD Geometry");
             RestorePreviewTestAnimationPose();
             RestorePose();
 

@@ -217,20 +217,52 @@ public partial class Reanimator
         if (layerPreviewRenderer == null)
             throw new System.InvalidOperationException("Reanimator preview renderer is not ready.");
 
-        if (!layerPreviewRenderer.TryApplyFaceEyesAutomation(
-                faceEyesPointDensity,
-                faceEyesPointOffset,
-                faceEyesOutlineOffset,
-                faceEyesWeightCurve,
-                out var result,
-                out var error))
+        return RunNativeUndoGroup("Apply Face Eyes", () =>
         {
-            throw new System.InvalidOperationException(
-                string.IsNullOrWhiteSpace(error) ? "Face Eyes automation failed." : error);
-        }
+            if (!layerPreviewRenderer.TryApplyFaceEyesAutomation(
+                    faceEyesPointDensity,
+                    faceEyesPointOffset,
+                    faceEyesOutlineOffset,
+                    faceEyesWeightCurve,
+                    out var result,
+                    out var error))
+            {
+                throw new System.InvalidOperationException(
+                    string.IsNullOrWhiteSpace(error) ? "Face Eyes automation failed." : error);
+            }
 
-        Repaint();
-        return result;
+            Repaint();
+            return result;
+        });
+    }
+
+    string IReanimatorExternalPanelHost.RunUndoGroup(string operationName, System.Func<string> apply)
+    {
+        return RunNativeUndoGroup(operationName, apply);
+    }
+
+    private string RunNativeUndoGroup(string operationName, System.Func<string> apply)
+    {
+        Undo.IncrementCurrentGroup();
+        var group = Undo.GetCurrentGroup();
+        Undo.SetCurrentGroupName(operationName);
+        try
+        {
+            var result = apply();
+            Undo.CollapseUndoOperations(group);
+            Undo.SetCurrentGroupName(operationName);
+            return result;
+        }
+        catch
+        {
+            Undo.RevertAllDownToGroup(group);
+            RefreshAfterUndoRedo();
+            throw;
+        }
+        finally
+        {
+            Undo.IncrementCurrentGroup();
+        }
     }
 
     string IReanimatorExternalPanelHost.LocateNipples(

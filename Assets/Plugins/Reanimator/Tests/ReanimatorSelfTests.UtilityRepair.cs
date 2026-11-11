@@ -5,7 +5,6 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.U2D;
 using UnityEngine.U2D.Animation;
-using UnityEngine.U2D.IK;
 
 internal static partial class ReanimatorSelfTests
 {
@@ -71,7 +70,6 @@ internal static partial class ReanimatorSelfTests
             skeleton.SetParent(root.transform, false);
             var rigs = new GameObject("rigs").transform;
             rigs.SetParent(root.transform, false);
-            var manager = rigs.gameObject.AddComponent<IKManager2D>();
 
             var leftArm = CreateCookFixtureBone(skeleton, "l_arm", new Vector3(-1f, 0f, 0f));
             var leftElbow = CreateCookFixtureBone(leftArm, "l_elbow", new Vector3(-0.5f, 0f, 0f));
@@ -85,13 +83,15 @@ internal static partial class ReanimatorSelfTests
             var rightArm2 = CreateCookFixtureBone(skeleton, "r_arm_2", new Vector3(0.8f, 0.5f, 0f));
             var rightElbow2 = CreateCookFixtureBone(rightArm2, "r_arm_3", new Vector3(0.4f, 0.4f, 0f));
             var rightHand2 = CreateCookFixtureBone(rightElbow2, "r_hand_2", new Vector3(0.4f, 0.4f, 0f));
+            var softLeft = CreateCookFixtureBone(leftArm, "l_arm_SC", Vector3.up);
+            var softRight = CreateCookFixtureBone(rightArm, "r_arm_SC", Vector3.up);
             var bones = new[]
             {
                 leftArm, leftElbow, leftHand, rightArm, rightElbow, rightHand,
-                leftArm2, leftElbow2, leftHand2, rightArm2, rightElbow2, rightHand2
+                leftArm2, leftElbow2, leftHand2, rightArm2, rightElbow2, rightHand2, softLeft, softRight
             };
 
-            var created = ReanimatorPrefabCooker.AddLimbSolvers(manager, rigs, bones);
+            var created = ReanimatorPrefabCooker.ConfigureReaniIK(rigs, bones);
             AssertEqual(4, created, "Cook Prefab should add independent hand solvers for both arm pairs and skip absent feet.");
 
             var leftTarget = rigs.Find("l_hand_target");
@@ -107,20 +107,19 @@ internal static partial class ReanimatorSelfTests
             AssertVector((Vector2)leftHand2.position, leftTarget2.position, 0.0001f, "Second left hand target should start at the second hand.");
             AssertVector((Vector2)rightHand2.position, rightTarget2.position, 0.0001f, "Second right hand target should start at the second hand.");
 
-            var leftSolver = rigs.Find("l_arm_limb")?.GetComponent<LimbSolver2D>();
-            var rightSolver = rigs.Find("r_arm_limb")?.GetComponent<LimbSolver2D>();
-            var leftSolver2 = rigs.Find("l_arm_2_limb")?.GetComponent<LimbSolver2D>();
-            var rightSolver2 = rigs.Find("r_arm_2_limb")?.GetComponent<LimbSolver2D>();
-            AssertTrue(leftSolver != null && ReferenceEquals(leftHand, leftSolver.GetChain(0).effector), "Left arm solver should use l_hand as its effector.");
-            AssertTrue(rightSolver != null && ReferenceEquals(rightHand, rightSolver.GetChain(0).effector), "Right arm solver should use r_hand as its effector.");
-            AssertTrue(leftSolver2 != null && ReferenceEquals(leftHand2, leftSolver2.GetChain(0).effector), "Second left arm solver should use only l_hand_2 as its effector.");
-            AssertTrue(rightSolver2 != null && ReferenceEquals(rightHand2, rightSolver2.GetChain(0).effector), "Second right arm solver should use only r_hand_2 as its effector.");
-            AssertEqual(3, leftSolver.GetChain(0).transformCount, "Left arm solver should use the arm/elbow/hand chain.");
-            AssertEqual(3, rightSolver.GetChain(0).transformCount, "Right arm solver should use the arm/elbow/hand chain.");
-            AssertEqual(3, leftSolver2.GetChain(0).transformCount, "Second left arm solver should use the l_arm_2/l_arm_3/l_hand_2 chain.");
-            AssertEqual(3, rightSolver2.GetChain(0).transformCount, "Second right arm solver should use the r_arm_2/r_arm_3/r_hand_2 chain.");
-            AssertFalse(ReferenceEquals(leftSolver.GetChain(0).effector, leftSolver2.GetChain(0).effector), "Left arm rig pairs must stay independent.");
-            AssertFalse(ReferenceEquals(rightSolver.GetChain(0).effector, rightSolver2.GetChain(0).effector), "Right arm rig pairs must stay independent.");
+            var rig = root.GetComponent<ReaniIK>();
+            AssertTrue(rig != null, "Cook Prefab should install ReaniIK on the prefab root.");
+            AssertEqual(2, rig.softContour.bones.Length, "Cook Prefab should bind all SC bones.");
+            AssertTrue(rig.softContour.bones[0] == softLeft && rig.softContour.bones[1] == softRight,
+                "Only bones ending in _SC should join the Soft Contour spring group.");
+            AssertTrue(rig.leftArm.IsValid && rig.leftArm.tip == leftHand, "Left arm must bind to l_hand.");
+            AssertTrue(rig.rightArm.IsValid && rig.rightArm.tip == rightHand, "Right arm must bind to r_hand.");
+            AssertTrue(rig.leftArm2.IsValid && rig.leftArm2.tip == leftHand2, "Second left arm must bind to l_hand_2.");
+            AssertTrue(rig.rightArm2.IsValid && rig.rightArm2.tip == rightHand2, "Second right arm must bind to r_hand_2.");
+            AssertFalse(rig.leftLeg.IsValid || rig.rightLeg.IsValid, "Absent feet must stay unbound.");
+            AssertEqual(4, ReanimatorPrefabCooker.ConfigureReaniIK(rigs, bones), "Repeated setup should resolve the same chains.");
+            AssertEqual(4, rigs.childCount, "Repeated setup must reuse IK targets.");
+
         }
         finally
         {

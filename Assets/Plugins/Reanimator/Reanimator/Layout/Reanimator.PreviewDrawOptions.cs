@@ -70,12 +70,22 @@ public partial class Reanimator : EditorWindow
             radiusCullRadius,
             radiusCullRemoveContourVertices,
             radiusCullRemoveInnerVertices,
-            limbsUseRadiusCull,
+            limbsUseRadiusCull && !limbsBoneMode,
             jointUseRadiusCull,
             jointCPairOffset,
             jointLongPoints,
             jointStartLongPointsOffset,
             jointEndLongPointsOffset);
+
+        if (options.Tools.Limb && limbsBoneMode)
+        {
+            options.Tools.Limb = false;
+            options.Tools.LimbBone = true;
+            options.Tools.LimbBoneChild = limbsChildBoneIndex;
+            options.Tools.LimbBoneCull = limbsUseRadiusCull;
+            options.AllowBoneTransformEditing = false;
+            options.AllowBonePoseEditing = false;
+        }
 
         options.Joint.AlgorithmMode = jointAlgorithmMode;
         options.Joint.WeightCurve = jointV2FirstIterationWeightCurve;

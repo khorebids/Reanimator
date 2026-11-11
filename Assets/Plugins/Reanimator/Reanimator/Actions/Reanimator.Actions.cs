@@ -14,6 +14,49 @@ public partial class Reanimator : EditorWindow
         window.RepairSpriteSheetPsdParametersFromUi();
     }
 
+    private void QueueApplyChanges()
+    {
+        if (pendingApplyPath != null)
+            return;
+        var path = GetSelectedAssetPath();
+        if (string.IsNullOrWhiteSpace(path) || !IsPsdPath(path))
+        {
+            ShowNotification(new GUIContent("Select PSD/PSB first"));
+            return;
+        }
+
+        pendingApplyPath = path;
+        pendingApplyStart = double.PositiveInfinity;
+        EditorApplication.update += RunPendingApply;
+        Repaint();
+    }
+
+    private void RunPendingApply()
+    {
+        if (EditorApplication.timeSinceStartup < pendingApplyStart)
+            return;
+
+        EditorApplication.update -= RunPendingApply;
+        try
+        {
+            if (string.Equals(pendingApplyPath, GetSelectedAssetPath(), StringComparison.OrdinalIgnoreCase))
+                ApplyChanges();
+            else
+                ShowNotification(new GUIContent("Apply canceled: selected PSD changed"));
+        }
+        finally
+        {
+            ClearPendingApply();
+            Repaint();
+        }
+    }
+
+    private void ClearPendingApply()
+    {
+        EditorApplication.update -= RunPendingApply;
+        pendingApplyPath = null;
+    }
+
     private void ApplyChanges()
     {
         CommitBoneRename();
@@ -87,6 +130,8 @@ public partial class Reanimator : EditorWindow
             return;
         }
 
+        if (layerPreviewRenderer != null && layerPreviewRenderer.HasPendingChanges)
+            RegisterReanimatorUndo("Revert Reanimator Changes");
         layerPreviewRenderer?.Revert(path);
         DeferPreviewContent();
         ShowNotification(new GUIContent("Reverted"));

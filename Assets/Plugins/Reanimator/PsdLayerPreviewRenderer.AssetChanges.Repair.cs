@@ -29,7 +29,7 @@ public partial class PsdLayerPreviewRenderer
 
         try
         {
-            Undo.RegisterCompleteObjectUndo(importer, "Repair Sprite Sheet Importer Parameters");
+            ReanimatorAssetMetaPersistence.RegisterImporterUndo(importer, "Repair Sprite Sheet Importer Parameters");
             RestorePreviewTestAnimationPose();
             RestorePose();
 

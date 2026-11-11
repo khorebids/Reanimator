@@ -434,6 +434,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             return;
         }
 
+        var assetPath = host.CurrentAssetPath;
         fullBoobsRunning = true;
         actionStatusIsError = false;
         host.RepaintHost();
@@ -444,6 +445,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             ClearNippleTargets();
             RunNipplesFromButton(host);
             await WaitForComfimatorOperationAsync(() => nipplesRunning, "Nipples");
+            RequireCurrentAutomationAsset(host, assetPath);
             if (!nippleTargetsVisible)
                 throw new InvalidOperationException("Nipple detection produced no targets. " + actionStatus);
 
@@ -452,6 +454,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             boobContoursVisible = false;
             RunDetectBoobsFromButton(host);
             await WaitForComfimatorOperationAsync(() => detectBoobsRunning, "Detect Boobs");
+            RequireCurrentAutomationAsset(host, assetPath);
             if (!boobContoursVisible || leftBoobContourDoc.Length < 3 || rightBoobContourDoc.Length < 3)
                 throw new InvalidOperationException("Breast detection produced no valid contours. " + actionStatus);
 
@@ -526,6 +529,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             return;
         }
 
+        var assetPath = host.CurrentAssetPath;
         EnsureSettingsLoaded();
         detectBoobsRunning = true;
         actionStatus = "Detect Boobs: capturing visible sprites";
@@ -543,6 +547,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             host.ShowNotification(actionStatus);
             host.RepaintHost();
             var nippleResult = await ComfimatorComfyClient.RunNippleVisionAsync(serverUrl, screenshotPath);
+            RequireCurrentAutomationAsset(host, assetPath);
             var usedExistingNippleTargets = TryGetCurrentNippleTargets(
                 host,
                 out var viewerLeftNippleDoc,
@@ -584,6 +589,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
                 hasNippleAnchors,
                 viewerLeftNipple,
                 viewerRightNipple);
+            RequireCurrentAutomationAsset(host, assetPath);
             if (hasNippleAnchors && TryBuildFusedBodyBoobContours(
                     host,
                     screenshotPath,
@@ -1552,6 +1558,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         if (host == null || nipplesRunning)
             return;
 
+        var assetPath = host.CurrentAssetPath;
         EnsureSettingsLoaded();
         // A search is a replacement operation. Remove every trace of the
         // previous result before capturing or awaiting Comfy so stale targets
@@ -1569,6 +1576,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             host.RepaintHost();
 
             var result = await ComfimatorComfyClient.RunNippleVisionAsync(serverUrl, screenshotPath);
+            RequireCurrentAutomationAsset(host, assetPath);
             leftNippleTargetDoc = host.WorkspaceNormalizedToDocument(result.ViewerLeft);
             rightNippleTargetDoc = host.WorkspaceNormalizedToDocument(result.ViewerRight);
             leftNippleConfidence = result.LeftConfidence;
@@ -1921,6 +1929,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             return;
         }
 
+        var assetPath = host.CurrentAssetPath;
         EnsureSettingsLoaded();
         allInRunning = true;
         SetAllInProgress("ALLIN: checking Comfy", 0.02f, 0.06f);
@@ -1932,63 +1941,18 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         {
             connectionStatus = await ComfimatorComfyClient.CheckConnectionAsync(serverUrl);
 
-            var geometry = "Auto Geometry disabled; using imported PSD geometry";
-            if (AllInAutoGeometryEnabled)
-            {
-                SetAllInProgress("ALLIN: generating geometry", 0.08f, 0.24f);
-                host.RepaintHost();
-                geometry = RunAutoGeometry(host);
-            }
-
-            SetAllInProgress("ALLIN: geometry complete", 0.28f, 0.28f);
-            host.RepaintHost();
-
+            RequireCurrentAutomationAsset(host, assetPath);
             SetAllInProgress("ALLIN: generating skeleton", 0.34f, 0.68f);
             host.RepaintHost();
-            var skeleton = await RunAutoSkeletonAsync(
+            var result = await RunAutoSkeletonAsync(
                 host,
                 "ALLIN Auto Skeleton",
                 AllInBreastProcessingEnabled,
                 AllInEyeProcessingEnabled,
-                useQwenNipplePositioning: false);
-
-            SetAllInProgress("ALLIN: skeleton complete", 0.72f, 0.72f);
-            host.RepaintHost();
-
-            if (AllInAutoGeometryEnabled)
-            {
-                // Auto Skeleton is asynchronous and may span an editor-domain
-                // refresh or a stale preview-cache rebuild. Re-run the
-                // deterministic geometry stage immediately before weights so
-                // ALLIN can never bind or display the importer mesh that was
-                // present before this run.
-                SetAllInProgress("ALLIN: finalizing geometry", 0.74f, 0.77f);
-                host.RepaintHost();
-                geometry = RunAutoGeometry(host);
-            }
-
-            SetAllInProgress("ALLIN: applying weights", 0.78f, 0.92f);
-            host.RepaintHost();
-            var weights = RunAutoWeights(host);
-            if (AllInPostWeightsRestCommitEnabled)
-            {
-                // Auto Weights already builds bind matrices for the generated
-                // skeleton. This extra global rebind is disabled diagnostically.
-                host.CommitCurrentBonePoseAsRest();
-            }
-
-            var faceEyes = "eye processing disabled for diagnostic test";
-            if (AllInEyeProcessingEnabled)
-            {
-                SetAllInProgress("ALLIN: applying Face Eyes", 0.94f, 0.999f);
-                actionStatusIsError = false;
-                host.RepaintHost();
-                faceEyes = RunFaceEyes(host);
-            }
-
+                useQwenNipplePositioning: false,
+                applySkeleton: apply => host.RunUndoGroup("ALLIN", () => ApplyAllInStages(host, apply)));
             SetAllInProgress("ALLIN complete", 1f, 1f);
-            actionStatus = "ALLIN complete: " + geometry + "; Auto Skeleton: " + skeleton + "; " +
-                           weights + "; " + faceEyes;
+            actionStatus = result;
             host.ShowNotification("ALLIN complete");
         }
         catch (Exception ex)
@@ -2011,6 +1975,30 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             allInRunning = false;
             host.RepaintHost();
         }
+    }
+
+    private string ApplyAllInStages(IReanimatorExternalPanelHost host, Func<string> applySkeleton)
+    {
+        var geometry = "using imported PSD geometry";
+        if (AllInAutoGeometryEnabled)
+            geometry = RunAutoGeometry(host);
+
+        var skeleton = applySkeleton();
+        SetAllInProgress("ALLIN: applying weights", 0.78f, 0.92f);
+        host.RepaintHost();
+        var weights = RunAutoWeights(host);
+        if (AllInPostWeightsRestCommitEnabled)
+            host.CommitCurrentBonePoseAsRest();
+
+        var faceEyes = AllInEyeProcessingEnabled ? RunFaceEyes(host) : "eye processing disabled";
+        return "ALLIN complete: " + geometry + "; Auto Skeleton: " + skeleton + "; " +
+               weights + "; " + faceEyes;
+    }
+
+    private static void RequireCurrentAutomationAsset(IReanimatorExternalPanelHost host, string assetPath)
+    {
+        if (!string.Equals(host.CurrentAssetPath, assetPath, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The selected PSD changed while ComfyUI was running.");
     }
 
     private void SetAllInProgress(string status, float progress, float softMaxProgress)
@@ -2036,7 +2024,8 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         string label,
         bool includeBreastProcessing,
         bool includeEyeProcessing,
-        bool useQwenNipplePositioning = true)
+        bool useQwenNipplePositioning = true,
+        Func<Func<string>, string> applySkeleton = null)
     {
         if (host == null)
             throw new InvalidOperationException("Reanimator host is not ready.");
@@ -2051,6 +2040,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         actionStatusIsError = false;
         host.RepaintHost();
 
+        var assetPath = host.CurrentAssetPath;
         var secondaryArmLayerCount = host.SecondaryArmLayerCount;
         if (secondaryArmLayerCount == 1)
             throw new InvalidOperationException("Auto Skeleton needs both l_arm_2 and r_arm_2; only one secondary arm layer was found.");
@@ -2073,7 +2063,8 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         if (string.IsNullOrWhiteSpace(output.PoseJson))
             throw new InvalidOperationException("Comfy did not return pose keypoint JSON.");
 
-        string applyStatus;
+        RequireCurrentAutomationAsset(host, assetPath);
+        Func<string> applyPose;
         var outputSummary = output.OutputFileName + ", " + output.PoseJsonFileName;
         if (hasSecondaryArmPair)
         {
@@ -2098,7 +2089,8 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             if (string.IsNullOrWhiteSpace(secondaryOutput.PoseJson))
                 throw new InvalidOperationException("Comfy did not return pose keypoint JSON for the secondary arm pass.");
 
-            applyStatus = host.ApplyAutoSkeletonPoseJsonWithSecondaryArms(
+            RequireCurrentAutomationAsset(host, assetPath);
+            applyPose = () => host.ApplyAutoSkeletonPoseJsonWithSecondaryArms(
                 output.PoseJson,
                 secondaryOutput.PoseJson,
                 AutoSkeletonNamingReferenceAssetPath,
@@ -2109,31 +2101,42 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         }
         else
         {
-            applyStatus = host.ApplyAutoSkeletonPoseJson(
+            applyPose = () => host.ApplyAutoSkeletonPoseJson(
                 output.PoseJson,
                 AutoSkeletonNamingReferenceAssetPath,
                 autoSkeletonIncludeFingers,
                 includeBreastProcessing,
                 includeEyeProcessing);
         }
-        var nippleStatus = includeBreastProcessing
+        if (applySkeleton != null)
+        {
+            var result = applySkeleton(applyPose);
+            connectionStatus = "Connected";
+            return result + " (" + outputSummary + ")";
+        }
+
+        Func<string> applyNipples = () => includeBreastProcessing
             ? "breast controls kept at deterministic skeleton positions"
             : "breast controls disabled for diagnostic test";
         if (includeBreastProcessing && useQwenNipplePositioning)
         {
-            nippleStatus = await ApplyAutoSkeletonNipplePositionsAsync(
+            applyNipples = await PrepareAutoSkeletonNipplePositionsAsync(
                 host,
                 screenshotPath,
-                label);
+                label,
+                assetPath);
         }
+        RequireCurrentAutomationAsset(host, assetPath);
+        var resultSummary = host.RunUndoGroup(label, () => applyPose() + "; " + applyNipples());
         connectionStatus = "Connected";
-        return applyStatus + "; " + nippleStatus + " (" + outputSummary + ")";
+        return resultSummary + " (" + outputSummary + ")";
     }
 
-    private async Task<string> ApplyAutoSkeletonNipplePositionsAsync(
+    private async Task<Func<string>> PrepareAutoSkeletonNipplePositionsAsync(
         IReanimatorExternalPanelHost host,
         string screenshotPath,
-        string label)
+        string label,
+        string assetPath)
     {
         if (allInRunning)
             SetAllInProgress(label + ": locating nipples", 0.68f, 0.71f);
@@ -2158,20 +2161,24 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         }
         catch (Exception ex)
         {
-            return "nipple positions unchanged (" + ex.Message + ")";
+            return () => "nipple positions unchanged (" + ex.Message + ")";
         }
 
-        if (!TrySetSemanticNippleBonePositions(host, targetViewerLeft, targetViewerRight))
-            return "nipple bones were not found";
+        RequireCurrentAutomationAsset(host, assetPath);
+        return () =>
+        {
+            if (!TrySetSemanticNippleBonePositions(host, targetViewerLeft, targetViewerRight))
+                return "nipple bones were not found";
 
-        leftNippleTargetDoc = targetViewerLeft;
-        rightNippleTargetDoc = targetViewerRight;
-        leftNippleConfidence = targetLeftConfidence;
-        rightNippleConfidence = targetRightConfidence;
-        nippleTargetsVisible = true;
-        nippleTargetAssetPath = host.CurrentAssetPath ?? string.Empty;
-        host.RepaintHost();
-        return "nipple bones positioned from " + source;
+            leftNippleTargetDoc = targetViewerLeft;
+            rightNippleTargetDoc = targetViewerRight;
+            leftNippleConfidence = targetLeftConfidence;
+            rightNippleConfidence = targetRightConfidence;
+            nippleTargetsVisible = true;
+            nippleTargetAssetPath = host.CurrentAssetPath ?? string.Empty;
+            host.RepaintHost();
+            return "nipple bones positioned from " + source;
+        };
     }
 
     private static bool TrySetSemanticNippleBonePositions(

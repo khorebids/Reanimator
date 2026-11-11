@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.IO;
 using UnityEditor;
 using UnityEditor.U2D.Animation;
 using UnityEditor.U2D.PSD;
@@ -25,13 +26,22 @@ public partial class PsdLayerPreviewRenderer
         if (!TryCreateApplySession(assetPath, out var session, out error))
             return false;
 
+        using var suspendedSkins = new ApplySpriteSkinSuspension(session.AssetPath);
         var failureState = CaptureApplyFailureWorkingState();
         var applyCompleted = false;
+        byte[] originalMetadata = null;
         var spritePositionSyncSuppression = ReanimatorPsdSpritePositionPostprocessor.SuppressForAsset(assetPath);
         try
         {
+            originalMetadata = File.ReadAllBytes(assetPath + ".meta");
+            if (UndoRequest != null && (hasPendingChanges || HasPendingMeshWorkForAsset(assetPath)))
+            {
+                const string undoName = "Apply Reanimator Changes";
+                RegisterUndo(undoName);
+                ReanimatorAssetMetaPersistence.RegisterImporterUndo(session.Importer, undoName);
+            }
             RestorePreviewTestAnimationPose();
-            RestorePose();
+            RestorePoseForAssetTool();
 
             if (!ApplyDataProviderMeshAndRectStage(session, out error))
                 return false;
@@ -49,8 +59,10 @@ public partial class PsdLayerPreviewRenderer
 
             StageApplyOldEditorMetadata(session);
 
-            PersistApplySession(session);
+            CapturePendingUiVisibilityState(session.AssetPath);
+            PersistImporterMetadataAndReimport(session.AssetPath);
             applyCompleted = true;
+            RefreshAfterCommittedApply(session);
             return true;
         }
         catch (Exception ex)
@@ -60,9 +72,64 @@ public partial class PsdLayerPreviewRenderer
         }
         finally
         {
-            if (!applyCompleted)
-                RestoreApplyFailureWorkingState(failureState);
-            spritePositionSyncSuppression.Dispose();
+            try
+            {
+                if (!applyCompleted)
+                {
+                    if (originalMetadata != null)
+                    {
+                        try
+                        {
+                            RestoreApplyImporterMetadata(assetPath, originalMetadata);
+                        }
+                        catch (Exception rollbackError)
+                        {
+                            error += " Importer rollback failed: " + rollbackError.Message;
+                            ReanimatorLog.Exception(rollbackError);
+                        }
+                    }
+                    RestoreApplyFailureWorkingState(failureState);
+                }
+            }
+            finally
+            {
+                spritePositionSyncSuppression.Dispose();
+            }
+        }
+    }
+
+    // SpriteSkin keeps native views of imported vertex data. Unregister live skins
+    // before the importer replaces that data, including skins in preview scenes.
+    internal sealed class ApplySpriteSkinSuspension : IDisposable
+    {
+        private readonly List<UnityEngine.U2D.Animation.SpriteSkin> skins = new();
+
+        public ApplySpriteSkinSuspension(string assetPath)
+        {
+            try
+            {
+                foreach (var skin in UnityEngine.Resources.FindObjectsOfTypeAll<UnityEngine.U2D.Animation.SpriteSkin>())
+                {
+                    if (!skin || !skin.isActiveAndEnabled || EditorUtility.IsPersistent(skin) ||
+                        !skin.TryGetComponent<UnityEngine.SpriteRenderer>(out var renderer) ||
+                        !string.Equals(AssetDatabase.GetAssetPath(renderer.sprite), assetPath, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    skins.Add(skin);
+                    skin.enabled = false;
+                }
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (var skin in skins)
+                if (skin) skin.enabled = true;
+            skins.Clear();
         }
     }
 
@@ -365,13 +432,14 @@ public partial class PsdLayerPreviewRenderer
             syncPsdLayerMosaicPositions: false);
     }
 
-    private void PersistApplySession(ApplySession session)
+    internal static void RestoreApplyImporterMetadata(string assetPath, byte[] metadata)
     {
-        if (session == null)
-            return;
+        File.WriteAllBytes(assetPath + ".meta", metadata);
+        AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+    }
 
-        CapturePendingUiVisibilityState(session.AssetPath);
-        PersistImporterMetadataAndReimport(session.AssetPath);
+    private void RefreshAfterCommittedApply(ApplySession session)
+    {
         RemoveAutoGeometryPatchesForAsset(session.AssetPath);
         if (session.HasMeshChanges)
             RemoveAppliedVerticesForAsset(session.AssetPath);
@@ -379,7 +447,15 @@ public partial class PsdLayerPreviewRenderer
         hasPendingChanges = false;
         ClearDirtyLayerSpriteState();
         InvalidatePreviewCacheAfterImport();
-        Rebuild(session.AssetPath, true);
+        try
+        {
+            Rebuild(session.AssetPath, true);
+        }
+        catch (Exception ex)
+        {
+            InvalidatePreviewCacheAfterImport();
+            ReanimatorLog.Error("[Reanimator] Asset saved. Preview refresh will retry: " + ex);
+        }
     }
 
     private void InvalidatePreviewCacheAfterImport()

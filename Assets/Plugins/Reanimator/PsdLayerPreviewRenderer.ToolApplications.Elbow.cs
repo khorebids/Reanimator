@@ -39,6 +39,9 @@ public partial class PsdLayerPreviewRenderer
         if (!TryBuildElbowArcInteriorPoints(a, b, radialPoints, bend, arcPoints))
             BuildLinearInteriorPoints(a, b, radialPoints, arcPoints);
 
+        if (!TryGetLayerVertexDataForKeys(line.layerSelectionKey, line.layerStableKey, out var data))
+            return false;
+
         RegisterUndo("Apply Elbow");
         TryAddAppliedVertex(cachedPath, line.layerSelectionKey, line.layerStableKey, a, true);
         for (var i = 0; i < arcPoints.Count; i++)
@@ -46,7 +49,7 @@ public partial class PsdLayerPreviewRenderer
         TryAddAppliedVertex(cachedPath, line.layerSelectionKey, line.layerStableKey, center, true);
         TryAddAppliedVertex(cachedPath, line.layerSelectionKey, line.layerStableKey, b, true);
         RemoveElbowLineAt(lineIndex);
-        hasPendingChanges = true;
+        MarkEditGeometryDataChanged(data, line.layerSelectionKey, line.layerStableKey);
         return true;
     }
 

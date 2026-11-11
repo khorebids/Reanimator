@@ -509,6 +509,12 @@ public partial class PsdLayerPreviewRenderer
         }
         OptimizeLayerTriangleQuality(data);
         BuildEdgePairs(data.triangles, data.vertices.Length, out data.allEdgePairs, out data.boundaryEdgePairs);
+        for (int i = 0; i < data.boneWeights.Length; i++)
+        {
+            var weight = data.boneWeights[i];
+            if (weight.weight0 + weight.weight1 + weight.weight2 + weight.weight3 <= 0.0001f)
+                data.boneWeights[i] = new BoneWeight { boneIndex0 = headSpriteBone, weight0 = 1f };
+        }
         MarkSkinningWeightsChanged(data);
         var selectionKey = BuildSelectionKey(layer);
         var stableKey = BuildKey(layer.name, layer.layerId);

@@ -1,5 +1,6 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
@@ -87,7 +88,15 @@ public partial class Reanimator : EditorWindow
             {
                 weightScroll = scrollScope.scrollPosition;
                 EditorGUILayout.LabelField("Limbs", EditorStyles.boldLabel);
-                EditorGUILayout.HelpBox(
+                var boneMode = GUILayout.Toolbar(limbsBoneMode ? 1 : 0, new[] { "Draw edge", "Bone" }) == 1;
+                if (limbsBoneMode != boneMode)
+                {
+                    limbsBoneMode = boneMode;
+                    Repaint();
+                }
+
+                if (!limbsBoneMode)
+                    EditorGUILayout.HelpBox(
                     "Draw a guide line. Apply pipeline: CircleClean first, then Limb points insertion. Limb points are computed from the original contour.",
                     MessageType.Info);
 
@@ -137,7 +146,7 @@ public partial class Reanimator : EditorWindow
 
                     using (new EditorGUILayout.HorizontalScope())
                     {
-                        GUILayout.Label("Center is locked to limb line midpoint", EditorStyles.miniLabel);
+                        GUILayout.Label(limbsBoneMode ? "Centered on the selected bone" : "Center is locked to limb line midpoint", EditorStyles.miniLabel);
                         GUILayout.FlexibleSpace();
                     }
                 }
@@ -149,6 +158,12 @@ public partial class Reanimator : EditorWindow
                 }
 
                 GUILayout.Space(6f);
+                if (limbsBoneMode)
+                {
+                    DrawLimbsBonePanel();
+                    return;
+                }
+
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     var hasSelection = layerPreviewRenderer != null && layerPreviewRenderer.HasLimbSelection();
@@ -182,6 +197,73 @@ public partial class Reanimator : EditorWindow
         }
     }
 
+    private void DrawLimbsBonePanel()
+    {
+        var renderer = layerPreviewRenderer;
+        if (renderer == null)
+            return;
+
+        EditorGUILayout.HelpBox("Select a sprite and the middle bone. The guide crosses the bone midpoint. Vertices on the guide are weighted 100% to that bone.", MessageType.Info);
+        if (renderer.TryGetSelectedLayer(out var layer))
+            EditorGUILayout.LabelField("Sprite", layer.name);
+
+        var bones = renderer.Bones;
+        var boneLabels = new string[bones.Count + 1];
+        boneLabels[0] = "Select a bone";
+        for (var index = 0; index < bones.Count; index++)
+            boneLabels[index + 1] = bones[index]?.name ?? "—";
+        var selected = EditorGUILayout.Popup("Bone", renderer.SelectedBoneIndex + 1, boneLabels) - 1;
+        if (selected != renderer.SelectedBoneIndex)
+        {
+            renderer.SelectBoneForExternalPanel(selected);
+            Repaint();
+        }
+
+        if (selected < 0 || selected >= bones.Count || bones[selected] == null)
+            return;
+
+        var parent = bones[selected].parentId;
+        if (parent < 0 || parent >= bones.Count || bones[parent] == null)
+        {
+            EditorGUILayout.HelpBox("Select a bone that has a parent.", MessageType.Info);
+            return;
+        }
+
+        EditorGUILayout.LabelField("Parent", bones[parent].name);
+        var children = new List<int>();
+        var childLabels = new List<string>();
+        for (var index = 0; index < bones.Count; index++)
+        {
+            if (index == parent || index == selected || bones[index]?.parentId != selected)
+                continue;
+            children.Add(index);
+            childLabels.Add(bones[index].name);
+        }
+
+        if (children.Count == 0)
+        {
+            EditorGUILayout.HelpBox("Select a bone that has a child.", MessageType.Info);
+            return;
+        }
+
+        var child = Mathf.Max(0, children.IndexOf(limbsChildBoneIndex));
+        if (children.Count == 1)
+            EditorGUILayout.LabelField("Child", childLabels[0]);
+        else
+            child = EditorGUILayout.Popup("Child", child, childLabels.ToArray());
+        limbsChildBoneIndex = children[child];
+
+        using (new EditorGUI.DisabledScope(layer == null))
+        {
+            if (GUILayout.Button("Apply", GUILayout.Height(22f)))
+            {
+                if (renderer.ApplyLimbBoneWeights(selected, limbsChildBoneIndex, limbsUseRadiusCull, radiusCullRadius, radiusCullRemoveInnerVertices, out var message))
+                    Repaint();
+                ShowNotification(new GUIContent(message));
+            }
+        }
+    }
+
     private void DrawBoobToolPanel(float availableHeight)
     {
         var contentHeight = Mathf.Max(80f, availableHeight - 10f);
@@ -196,7 +278,7 @@ public partial class Reanimator : EditorWindow
 
                 var version = GUILayout.Toolbar(
                     layerPreviewRenderer.BoobToolVersion,
-                    new[] { "V1", "V2" });
+                    new[] { "Single", "Full body" });
                 layerPreviewRenderer.BoobToolVersion = version;
                 GUILayout.Space(4f);
 
@@ -239,7 +321,10 @@ public partial class Reanimator : EditorWindow
                 }
             }
             if (GUILayout.Button("Clear Point", GUILayout.Height(22f)))
-                layerPreviewRenderer.ClearBoobPoint();
+            {
+                layerPreviewRenderer.ClearBoobPoint(recordUndo: true);
+                Repaint();
+            }
         }
     }
 
@@ -248,12 +333,16 @@ public partial class Reanimator : EditorWindow
         EditorGUILayout.HelpBox(
             "Choose exactly what to edit. Nipple targets can be clicked or dragged; contours are drawn while holding LMB. Contours close and smooth automatically.",
             MessageType.Info);
-        var selection = GUILayout.SelectionGrid(
-            layerPreviewRenderer.BoobV2Selection,
-            new[] { "Left Nipple", "Right Nipple", "Left Contour", "Right Contour" },
-            2,
-            GUILayout.Height(44f));
-        layerPreviewRenderer.BoobV2Selection = selection;
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            DrawBoobV2Item(0, "Left Nipple");
+            DrawBoobV2Item(1, "Right Nipple");
+        }
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            DrawBoobV2Item(2, "Left Contour");
+            DrawBoobV2Item(3, "Right Contour");
+        }
         EditorGUILayout.HelpBox(layerPreviewRenderer.BoobV2SelectionDescription, MessageType.None);
         layerPreviewRenderer.BoobV2ContourDensity = EditorGUILayout.IntSlider(
             "Density",
@@ -284,7 +373,7 @@ public partial class Reanimator : EditorWindow
             }
             if (GUILayout.Button("Clear All", GUILayout.Height(22f)))
             {
-                layerPreviewRenderer.ClearBoobV2();
+                layerPreviewRenderer.ClearBoobV2(recordUndo: true);
                 Repaint();
             }
         }
@@ -302,6 +391,35 @@ public partial class Reanimator : EditorWindow
                 {
                     ShowNotification(new GUIContent(string.IsNullOrEmpty(error) ? "Apply failed" : error));
                 }
+            }
+        }
+    }
+
+    private void DrawBoobV2Item(int item, string label)
+    {
+        const float buttonSize = 20f;
+        var assigned = layerPreviewRenderer.IsBoobV2ItemAssigned(item);
+        var selected = layerPreviewRenderer.BoobV2Selection == item;
+        var previousColor = GUI.backgroundColor;
+        try
+        {
+            if (!assigned)
+                GUI.backgroundColor = new Color(0.23f, 0.88f, 0.78f);
+            if (GUILayout.Toggle(selected, label, EditorStyles.miniButton, GUILayout.Height(buttonSize), GUILayout.ExpandWidth(true)))
+                layerPreviewRenderer.BoobV2Selection = item;
+        }
+        finally
+        {
+            GUI.backgroundColor = previousColor;
+        }
+
+        using (new EditorGUI.DisabledScope(!assigned))
+        {
+            if (GUILayout.Button(new GUIContent("×", "Clear " + label), EditorStyles.miniButton,
+                    GUILayout.Width(buttonSize), GUILayout.Height(buttonSize)))
+            {
+                layerPreviewRenderer.ClearBoobV2Item(item);
+                Repaint();
             }
         }
     }
@@ -462,7 +580,7 @@ public partial class Reanimator : EditorWindow
                         }
 
                         if (GUILayout.Button("Clear Point", GUILayout.Height(22f)))
-                            layerPreviewRenderer?.ClearJointPoint();
+                            layerPreviewRenderer?.ClearJointPoint(recordUndo: true);
                     }
                 }
             }
@@ -575,7 +693,7 @@ public partial class Reanimator : EditorWindow
                         }
 
                         if (GUILayout.Button("Clear Point", GUILayout.Height(22f)))
-                            layerPreviewRenderer?.ClearRadiusCullPoint();
+                            layerPreviewRenderer?.ClearRadiusCullPoint(recordUndo: true);
                     }
                 }
             }

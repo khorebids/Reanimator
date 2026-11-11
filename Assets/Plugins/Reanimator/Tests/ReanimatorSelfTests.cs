@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -99,10 +99,155 @@ internal static partial class ReanimatorSelfTests
             EditorApplication.Exit(0);
     }
 
+    private static void AutoSkeletonScopesOutputsAndDetectsErrors()
+    {
+        const string graphJson = @"{""4"":{""class_type"":""SavePoseKpsAsJsonFile"",""inputs"":{""filename_prefix"":""shared""}}}";
+        var graph = Newtonsoft.Json.Linq.JObject.Parse(graphJson);
+        var client = AppDomain.CurrentDomain.GetAssemblies()
+            .Select(assembly => assembly.GetType("ComfimatorComfyClient"))
+            .First(type => type != null);
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+        var scope = client.GetMethod("ScopeAutoSkeletonKeypoints", flags);
+        var completed = client.GetMethod("GetCompletedAutoSkeletonOutputs", flags);
+        var first = (string)scope.Invoke(null, new object[] { graph });
+        var second = (string)scope.Invoke(null, new object[] { graph });
+        AssertTrue(first != second && (string)graph["4"]["inputs"]["filename_prefix"] == second,
+            "Concurrent prompts must use distinct keypoint prefixes.");
+
+        const string foreign = @"{""foreign"":{""status"":{""completed"":true},""outputs"":{""4"":{}}}}";
+        AssertTrue(((Newtonsoft.Json.Linq.JObject)completed.Invoke(null, new object[] { foreign, "own" })) == null,
+            "Completed output for a different prompt must not be consumed.");
+        const string complete = @"{""own"":{""status"":{""completed"":true},""outputs"":{""4"":{}}}}";
+        AssertTrue(((Newtonsoft.Json.Linq.JObject)completed.Invoke(null, new object[] { complete, "own" }))?["4"] != null,
+            "Only the requested completed prompt can supply output.");
+
+        const string failed = @"{""own"":{""status"":{""completed"":false,""status_str"":""error"",""messages"":[""missing model""]}}}";
+        try
+        {
+            completed.Invoke(null, new object[] { failed, "own" });
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException?.Message.Contains("missing model") == true)
+        {
+            return;
+        }
+        throw new InvalidOperationException("Comfy failure must report the server's cause immediately.");
+    }
+
+    private static void ApplyRestoresPersistedImporterMetadata()
+    {
+        const string source = "Assets/Plugins/Reanimator/Graphics/icons.psd";
+        var copy = "Assets/__ReanimatorRollback_" + Guid.NewGuid().ToString("N") + ".psd";
+        AssertTrue(AssetDatabase.CopyAsset(source, copy), "Could not copy the PSD rollback fixture.");
+        try
+        {
+            var original = File.ReadAllBytes(copy + ".meta");
+            var importer = AssetImporter.GetAtPath(copy);
+            AssertTrue(importer != null, "PSD fixture must have an importer.");
+            var initialUserData = importer.userData;
+            importer.userData = "Reanimator rollback regression";
+            EditorUtility.SetDirty(importer);
+            AssetDatabase.WriteImportSettingsIfDirty(copy);
+            AssertFalse(original.SequenceEqual(File.ReadAllBytes(copy + ".meta")), "Fixture must persist a metadata change.");
+
+            PsdLayerPreviewRenderer.RestoreApplyImporterMetadata(copy, original);
+
+            AssertTrue(original.SequenceEqual(File.ReadAllBytes(copy + ".meta")), "Rollback must restore the original metadata bytes.");
+            AssertTrue(AssetImporter.GetAtPath(copy).userData == initialUserData, "Retry must see the restored importer state.");
+        }
+        finally
+        {
+            AssetDatabase.DeleteAsset(copy);
+        }
+    }
+
+    private static void PreviewLinesExcludeStaleScreenCoordinates()
+    {
+        var previous = PsdLayerPreviewRenderer.GetPreviewLineIndices(8);
+        var current = PsdLayerPreviewRenderer.GetPreviewLineIndices(4);
+        AssertArray(new[] { 0, 1, 2, 3 }, current,
+            "After filtering, only the two freshly projected line pairs can be submitted.");
+        AssertEqual(8, previous.Length, "A smaller redraw must not truncate the cached larger draw.");
+        AssertTrue(ReferenceEquals(current, PsdLayerPreviewRenderer.GetPreviewLineIndices(4)),
+            "Repeated redraws of the same edge count should reuse the index array.");
+    }
+
+    private static void SpriteDirtyStateSurvivesUnitySerialization()
+    {
+        var renderer = new PsdLayerPreviewRenderer();
+        var layer = BuildLayer("undo-sprite", 205, Vector2.zero);
+        layer.spriteGuid = "cccccccccccccccccccccccccccccccc";
+        layer.sourceRect = new Rect(0f, 0f, 32f, 48f);
+        SetPrivateField(renderer, "layerInfos", new List<PsdLayerPreviewRenderer.LayerInfo> { layer });
+
+        var before = JsonUtility.ToJson(renderer);
+        AssertTrue(renderer.SetLayerSpriteRect(layer, new Rect(0f, 0f, 28f, 48f)), "Sprite edit must change its rect.");
+        var after = JsonUtility.ToJson(renderer);
+
+        JsonUtility.FromJsonOverwrite(before, renderer);
+        AssertFalse((bool)InvokePrivateMethod(renderer, "HasDirtyLayerSpriteState"), "Undo must clear the restored dirty state.");
+        JsonUtility.FromJsonOverwrite(after, renderer);
+        AssertTrue((bool)InvokePrivateMethod(renderer, "HasDirtyLayerSpriteState"), "Redo must restore the dirty state needed by Apply.");
+    }
+
+    private static void RestorePoseCapturesPreviousBoneTransform()
+    {
+        var renderer = new PsdLayerPreviewRenderer();
+        var bone = new PsdLayerPreviewRenderer.BoneInfo
+        {
+            parentId = -1,
+            position = new Vector2(4f, 5f),
+            rotation = Quaternion.identity,
+            initialRotation = Quaternion.identity
+        };
+        var original = bone.position;
+        SetPrivateField(renderer, "bones", new List<PsdLayerPreviewRenderer.BoneInfo> { bone });
+        var recorded = 0;
+        renderer.UndoRequest = label =>
+        {
+            AssertEqual("Restore Pose", label, "Restore should add one labeled Unity Undo entry.");
+            AssertEqual(original, renderer.Bones[0].position, "Undo must capture the pose before restoring it.");
+            recorded++;
+        };
+
+        AssertTrue(renderer.RestorePose(), "Restore must change the bone to its initial pose.");
+        AssertEqual(Vector2.zero, renderer.Bones[0].position, "Restore should apply the initial pose.");
+        AssertEqual(1, recorded, "Restore must record exactly one snapshot.");
+    }
+
+    private static void GeometrySnapshotSupersedesDeferredElbowPoints()
+    {
+        const string path = "Assets/undo-elbow.psd";
+        var renderer = new PsdLayerPreviewRenderer();
+        var layer = BuildLayer("elbow", 204, Vector2.zero);
+        var selectionKey = (string)InvokePrivateMethod(renderer, "BuildSelectionKey", layer);
+        var stableKey = (string)InvokePrivateMethod(renderer, "BuildKey", layer.name, layer.layerId);
+        var data = CreatePrivateNestedInstance(renderer, "LayerVertexData");
+        SetPrivateField(data, "layer", layer);
+        SetPrivateField(data, "vertices", new[] { Vector2.zero, Vector2.right, Vector2.up });
+        SetPrivateField(data, "vertexUvs", new[] { Vector2.zero, Vector2.right, Vector2.up });
+        SetPrivateField(data, "triangles", new[] { 0, 1, 2 });
+        InvokePrivateMethod(renderer, "TryAddAppliedVertex", path, selectionKey, stableKey, Vector2.one, false);
+        InvokePrivateMethod(renderer, "TryAddAppliedVertex", path, "other-selection", "other-layer", Vector2.one, false);
+
+        InvokePrivateMethod(renderer, "UpsertAutoGeometryPatch", path, selectionKey, stableKey, data, false, null);
+
+        AssertEqual(1, GetPrivateListCount(renderer, "autoGeometryPatches"), "Geometry must have a snapshot for Redo.");
+        AssertFalse((bool)InvokePrivateMethod(renderer, "HasAppliedVerticesForLayer", path, selectionKey, stableKey),
+            "Redo must not reinsert superseded Elbow points into the snapshot.");
+        AssertTrue((bool)InvokePrivateMethod(renderer, "HasAppliedVerticesForLayer", path, "other-selection", "other-layer"),
+            "A geometry edit must preserve deferred points on a different layer.");
+    }
+
     private static List<Case> BuildCases()
     {
         return new List<Case>
         {
+            new Case("Geometry snapshot supersedes deferred Elbow points", GeometrySnapshotSupersedesDeferredElbowPoints),
+            new Case("Restore Pose captures previous bone transform", RestorePoseCapturesPreviousBoneTransform),
+            new Case("Sprite dirty state survives Unity serialization", SpriteDirtyStateSurvivesUnitySerialization),
+            new Case("Preview lines exclude stale screen coordinates", PreviewLinesExcludeStaleScreenCoordinates),
+            new Case("Auto Skeleton scopes outputs and detects Comfy errors", AutoSkeletonScopesOutputsAndDetectsErrors),
+            new Case("Apply restores persisted PSD importer metadata", ApplyRestoresPersistedImporterMetadata),
             new Case("VolumeCurve state is serializable and editable", VolumeCurveStateIsSerializableAndEditable),
             new Case("VolumeCurve selection and deletion stays clamped", VolumeCurveSelectionAndDeletionStaysClamped),
             new Case("VolumeCurve algorithms evaluate segment types", VolumeCurveAlgorithmsEvaluateSegmentTypes),
@@ -160,6 +305,7 @@ internal static partial class ReanimatorSelfTests
             new Case("Auto limb guide follows the two-bone bisector normal", AutoLimbGuideFollowsTwoBoneBisectorNormal),
             new Case("Limb apply with CircleClean creates pending geometry patch", LimbApplyWithCircleCleanCreatesPendingGeometryPatch),
             new Case("Limb apply falls back when CircleClean cannot clean", LimbApplyFallsBackWhenCircleCleanCannotClean),
+            new Case("WA resolves generated PSD importer IDs", PsdArmNamesResolveGeneratedImporterIds),
             new Case("Rebuild meta algorithms build stable hierarchy keys", RebuildMetaAlgorithmsBuildStableHierarchyKeys),
             new Case("Rebuild meta algorithms choose meta sprite positions safely", RebuildMetaAlgorithmsChooseMetaSpritePositionsSafely),
             new Case("Rebuild meta algorithms prefer visual sprite position over character part bounds", RebuildMetaAlgorithmsPreferVisualSpritePositionOverCharacterPartBounds),

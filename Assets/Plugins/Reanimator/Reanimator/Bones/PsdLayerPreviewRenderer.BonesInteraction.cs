@@ -14,6 +14,112 @@ using UnityEngine.Rendering;
 
 public partial class PsdLayerPreviewRenderer
 {
+    internal bool DeleteSelectedBone()
+    {
+        int removed = selectedBoneIndex;
+        if (removed < 0 || removed >= bones.Count || bones[removed] == null) return false;
+
+        RegisterUndo("Delete Bone");
+        var deleted = bones[removed];
+        var changedLayers = new List<KeyValuePair<string, LayerVertexData>>();
+        foreach (var pair in vertexDataByLayerSelectionKey)
+        {
+            var data = pair.Value;
+            var map = data?.spriteBoneToRendererBone;
+            if (map == null) continue;
+
+            int slot = Array.IndexOf(map, removed);
+            if (slot >= 0)
+            {
+                int fallback = deleted.parentId >= 0 ? deleted.parentId : removed == 0 ? 1 : 0;
+                int fallbackSlot = Array.IndexOf(map, fallback);
+                if (fallback < bones.Count && fallbackSlot < 0)
+                {
+                    TryEnsureRendererBindPoseSkinning(data);
+                    map = (int[])data.spriteBoneToRendererBone.Clone();
+                    map[slot] = fallback;
+                    var bind = BuildBindBoneInverseMatrices(map);
+                    data.spriteBoneToRendererBone = map;
+                    data.bindBoneInverseMatrices = bind;
+                    data.usesSpriteBindPoses = false;
+                }
+                else
+                {
+                    var nextMap = new List<int>(map);
+                    nextMap.RemoveAt(slot);
+                    var previousBind = data.bindBoneInverseMatrices;
+                    if (previousBind != null && previousBind.Length == map.Length)
+                    {
+                        var nextBind = new List<Matrix4x4>(previousBind);
+                        nextBind.RemoveAt(slot);
+                        data.bindBoneInverseMatrices = nextBind.ToArray();
+                    }
+                    else
+                    {
+                        data.bindBoneInverseMatrices = BuildBindBoneInverseMatrices(nextMap.ToArray());
+                        data.usesSpriteBindPoses = false;
+                    }
+                    data.spriteBoneToRendererBone = map = nextMap.ToArray();
+                    if (data.boneWeights != null)
+                    {
+                        var weights = new BoneWeight[data.boneWeights.Length];
+                        for (int i = 0; i < weights.Length; i++)
+                        {
+                            var original = data.boneWeights[i];
+                            var weight = ReanimatorWeightSliderAlgorithms.RemoveBoneInfluenceAndRemap(original, slot, map.Length + 1);
+                            if (fallbackSlot >= 0 && weight.weight0 <= 0f &&
+                                GetSpriteBoneWeight(original, slot) > 0f)
+                                weight = new BoneWeight { boneIndex0 = fallbackSlot > slot ? fallbackSlot - 1 : fallbackSlot, weight0 = 1f };
+                            weights[i] = weight;
+                        }
+                        data.boneWeights = weights;
+                    }
+                }
+            }
+
+            bool shifted = false;
+            var remapped = (int[])map.Clone();
+            for (int i = 0; i < remapped.Length; i++)
+            {
+                if (remapped[i] <= removed) continue;
+                remapped[i]--;
+                shifted = true;
+            }
+            if (slot < 0 && !shifted) continue;
+            data.spriteBoneToRendererBone = remapped;
+            changedLayers.Add(pair);
+        }
+
+        bones.RemoveAt(removed);
+        for (int i = 0; i < bones.Count; i++)
+        {
+            var bone = bones[i];
+            if (bone.parentId == removed)
+            {
+                bone.parentId = deleted.parentId;
+                if (!bonesTreatAsWorldSpace)
+                {
+                    bone.position = deleted.position + (Vector2)(deleted.rotation * (Vector3)bone.position);
+                    bone.rotation = deleted.rotation * bone.rotation;
+                    bone.initialPosition = deleted.initialPosition + (Vector2)(deleted.initialRotation * (Vector3)bone.initialPosition);
+                    bone.initialRotation = deleted.initialRotation * bone.initialRotation;
+                }
+            }
+            if (bone.parentId > removed) bone.parentId--;
+            bone.index = i;
+        }
+        selectedBoneIndex = -1;
+        RecomputeBoneWorldTransforms();
+        BuildBoneDrawOrder();
+        foreach (var pair in changedLayers)
+        {
+            var data = pair.Value;
+            MarkSkinningWeightsChanged(data);
+            MarkEditGeometryDataChanged(data, pair.Key, BuildKey(data.layer.name, data.layer.layerId));
+        }
+        MarkBoneStateChanged();
+        return true;
+    }
     internal enum CreateBoneAnchorKind
     {
         None = 0,

@@ -144,6 +144,8 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
     private static readonly string[] Tabs = { "Editor", "Statistics" };
     private static Texture2D windowIcon;
     [NonSerialized] private bool isApplyingChanges;
+    [NonSerialized] private string pendingApplyPath;
+    [NonSerialized] private double pendingApplyStart;
 
     [SerializeField] private int tabIndex;
     [SerializeField] private bool showPerSprite;
@@ -255,6 +257,8 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
     [SerializeField] private bool radiusCullRemoveInnerVertices = true;
     [SerializeField] private int curveSpaceMode;
     [SerializeField] private bool limbsUseRadiusCull = true;
+    [SerializeField] private bool limbsBoneMode;
+    private int limbsChildBoneIndex = -1;
     [SerializeField] private bool jointUseRadiusCull = true;
     [SerializeField, Range(0, 1)] private int jointAlgorithmMode;
     [SerializeField] private AnimationCurve jointV2FirstIterationWeightCurve =
@@ -447,6 +451,8 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
         StoreActivePreviewNavigator();
         EditorApplication.update -= HandleEditorUpdate;
         Undo.undoRedoPerformed -= HandleUndoRedoPerformed;
+        EditorApplication.delayCall -= RefreshAfterUndoRedo;
+        ClearPendingApply();
     }
 
     private void LoadFaceEyesWeightCurvePreference()
@@ -641,7 +647,22 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
 
     private void HandleUndoRedoPerformed()
     {
-        layerPreviewRenderer?.RefreshCachedAssetAfterUndoRedo();
+        // Let the native Undo callback persist restored importer settings first.
+        EditorApplication.delayCall -= RefreshAfterUndoRedo;
+        EditorApplication.delayCall += RefreshAfterUndoRedo;
+    }
+
+    private void RefreshAfterUndoRedo()
+    {
+        if (this == null)
+            return;
+        if (layerPreviewRenderer != null)
+        {
+            layerPreviewRenderer.UndoRequest = RegisterReanimatorUndo;
+            layerPreviewRenderer.RefreshCachedAssetAfterUndoRedo();
+            if (bottomToolMode == ReanimatorToolMode.Curve)
+                layerPreviewRenderer.RestoreCurveWeightPreviewAfterUndo();
+        }
         Repaint();
     }
 
@@ -879,6 +900,14 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
         if (IsRestorePoseHotkey(e))
         {
             RestorePreviewPose();
+            e.Use();
+            Repaint();
+            return;
+        }
+
+        if (bottomToolMode == ReanimatorToolMode.EditBone && e.keyCode == KeyCode.Delete &&
+            layerPreviewRenderer != null && layerPreviewRenderer.DeleteSelectedBone())
+        {
             e.Use();
             Repaint();
             return;

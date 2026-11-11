@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -633,6 +633,10 @@ internal static partial class ReanimatorSelfTests
             "Auto arm map must contain the shared arm bone chain.");
         AssertEqual(4, GetPrivateField<Vector2[]>(hiddenData, "vertices").Length,
             "Hidden arm layers must not receive Limbs geometry.");
+
+        var repeated = renderer.ApplyLeftArmAutoWeights();
+        AssertTrue(repeated.Contains("left elbow limb applied") && repeated.Contains("left wrist limb applied"),
+            "Auto Weights must reapply both joints when their guide vertices already exist. Status=" + repeated);
     }
 
     private static void ArmAutoWeightsIsolateBothArmPairs()

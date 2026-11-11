@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -8,8 +9,8 @@ internal static class ReanimatorDirtyLayerLookupBuilder
 {
     public static PsdLayerPreviewRenderer.DirtyLayerLookup Build(
         IReadOnlyList<PsdLayerPreviewRenderer.LayerInfo> layers,
-        HashSet<string> dirtyGuids,
-        HashSet<string> dirtyStableKeys)
+        ICollection<string> dirtyGuids,
+        ICollection<string> dirtyStableKeys)
     {
         var lookup = new PsdLayerPreviewRenderer.DirtyLayerLookup();
         if (layers == null || layers.Count == 0)
@@ -133,8 +134,8 @@ internal static class ReanimatorDirtyLayerLookupBuilder
     private static bool IsDirtyLayerState(
         PsdLayerPreviewRenderer.LayerInfo layer,
         string spriteGuid,
-        HashSet<string> dirtyGuids,
-        HashSet<string> dirtyStableKeys)
+        ICollection<string> dirtyGuids,
+        ICollection<string> dirtyStableKeys)
     {
         if ((dirtyGuids == null || dirtyGuids.Count == 0) &&
             (dirtyStableKeys == null || dirtyStableKeys.Count == 0))
@@ -143,7 +144,7 @@ internal static class ReanimatorDirtyLayerLookupBuilder
         var guid = NormalizeGuidString(spriteGuid);
         if (!string.IsNullOrEmpty(guid) &&
             dirtyGuids != null &&
-            dirtyGuids.Contains(guid))
+            dirtyGuids.Contains(guid, StringComparer.OrdinalIgnoreCase))
             return true;
 
         if (layer == null)
@@ -152,13 +153,13 @@ internal static class ReanimatorDirtyLayerLookupBuilder
         var layerGuid = NormalizeGuidString(layer.spriteGuid);
         if (!string.IsNullOrEmpty(layerGuid) &&
             dirtyGuids != null &&
-            dirtyGuids.Contains(layerGuid))
+            dirtyGuids.Contains(layerGuid, StringComparer.OrdinalIgnoreCase))
             return true;
 
         var stableKey = BuildStableKey(layer.name, layer.layerId);
         return !string.IsNullOrEmpty(stableKey) &&
                dirtyStableKeys != null &&
-               dirtyStableKeys.Contains(stableKey);
+               dirtyStableKeys.Contains(stableKey, StringComparer.OrdinalIgnoreCase);
     }
 
     private static string BuildStableKey(string name, int layerId)

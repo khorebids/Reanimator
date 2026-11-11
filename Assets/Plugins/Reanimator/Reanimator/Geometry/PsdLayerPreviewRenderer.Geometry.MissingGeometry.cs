@@ -112,7 +112,7 @@ public partial class PsdLayerPreviewRenderer
 
             if (!undoRegistered)
             {
-                Undo.RegisterCompleteObjectUndo(importer, "Generate Missing Geometry");
+                ReanimatorAssetMetaPersistence.RegisterImporterUndo(importer, "Generate Missing Geometry");
                 undoRegistered = true;
             }
             meshProvider.SetVertices(binding.spriteId, metaVertices);

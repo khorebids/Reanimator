@@ -46,7 +46,7 @@ public partial class Reanimator : EditorWindow
             return;
         }
 
-        RefreshEditedPsdAfterReimport(path);
+        RefreshEditedPsdAfterReimport(path, "Delete Bones");
         ShowNotification(new GUIContent("All bones deleted"));
     }
 
@@ -85,7 +85,7 @@ public partial class Reanimator : EditorWindow
             return;
         }
 
-        RefreshEditedPsdAfterReimport(targetPath);
+        RefreshEditedPsdAfterReimport(targetPath, "Copy Bones");
         ShowNotification(new GUIContent($"Copied bones: {copiedBones}, parts: {mappedParts}"));
     }
 
@@ -179,8 +179,11 @@ public partial class Reanimator : EditorWindow
         return false;
     }
 
-    private void RefreshEditedPsdAfterReimport(string path)
+    private void RefreshEditedPsdAfterReimport(string path, string undoName)
     {
+        if (layerPreviewRenderer != null && layerPreviewRenderer.HasPendingChanges)
+            Undo.RegisterCompleteObjectUndo(this, undoName);
+
         layerPreviewRenderer?.Revert(path);
         layerPreviewRenderer?.MarkDirty();
         ReselectAsset(path);

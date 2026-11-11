@@ -104,6 +104,7 @@ public interface IReanimatorExternalPanelHost
     string CookPrefabNextToPsd();
     Vector2 DocumentToPreview(Vector2 documentPoint);
     Vector2 PreviewToDocument(Vector2 previewPoint);
+    string RunUndoGroup(string operationName, Func<string> apply);
     void BeginUndo(string operationName);
     void SelectBone(int boneIndex);
     void SetBoneWorldTransform(int boneIndex, Vector2 worldPosition, Quaternion worldRotation, float length, bool commit);

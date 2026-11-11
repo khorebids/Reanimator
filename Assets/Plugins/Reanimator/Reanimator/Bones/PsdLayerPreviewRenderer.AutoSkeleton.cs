@@ -798,14 +798,44 @@ public partial class PsdLayerPreviewRenderer
                 AddSegment(handName, forearmName, wrist, handEnd);
             }
 
-            if (TryGetBodyPoint(hipIndex, out var hip) &&
-                TryGetBodyPoint(kneeIndex, out var knee))
+            var hasHip = TryGetBodyPoint(hipIndex, out var hip);
+            var hasKnee = TryGetBodyPoint(kneeIndex, out var knee);
+            if (hasHip && hasKnee)
                 AddSegment(legName, "hips", hip, knee);
+            else if (TryGetCroppedLegBounds(side, out var legBounds))
+            {
+                // The silhouette still needs a hip even when the pose detector
+                // cannot see the knee below the document edge.
+                var start = hasHip && legBounds.Contains(hip)
+                    ? hip
+                    : new Vector2(legBounds.center.x, Mathf.Lerp(legBounds.center.y, legBounds.yMax, 0.75f));
+                var end = hasKnee ? knee : new Vector2(legBounds.center.x, legBounds.yMin);
+                AddSegment(legName, "hips", start, end);
+            }
             if (TryGetBodyPoint(kneeIndex, out knee) &&
                 TryGetBodyPoint(ankleIndex, out var ankle))
                 AddSegment(shinName, legName, knee, ankle);
             if (TryGetBodyPoint(ankleIndex, out ankle) && TryGetBodyPoint(kneeIndex, out knee))
                 AddSegment(footName, shinName, ankle, ankle + (ankle - knee).normalized * Mathf.Max(10f, Vector2.Distance(ankle, knee) * 0.2f));
+        }
+
+        private bool TryGetCroppedLegBounds(string side, out Rect bounds)
+        {
+            foreach (var layer in owner.Layers)
+            {
+                if (layer == null || !layer.visible)
+                    continue;
+                var name = NormalizeAutoWeightName(layer.name);
+                if (name != side + "leg" && name != (side == "l" ? "leftleg" : "rightleg") &&
+                    name != "leg" + side)
+                    continue;
+                bounds = PsdCoordinateSpace.GetLayerDocumentRect(layer);
+                if (bounds.width > 0f && bounds.height > 0f && bounds.yMin <= 1f)
+                    return true;
+            }
+
+            bounds = default;
+            return false;
         }
 
         private void AddHand(string side, float[] hand)

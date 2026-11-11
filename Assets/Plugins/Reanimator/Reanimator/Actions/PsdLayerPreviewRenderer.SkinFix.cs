@@ -77,7 +77,7 @@ public partial class PsdLayerPreviewRenderer
                 return false;
             }
 
-            Undo.RegisterCompleteObjectUndo(importer, "Fix Sprite Skin Weights");
+            ReanimatorAssetMetaPersistence.RegisterImporterUndo(importer, "Fix Sprite Skin Weights");
             var hasImporterChanges = false;
             var boneProvider = dataProvider.GetDataProvider<ISpriteBoneDataProvider>();
             var characterProvider = dataProvider.GetDataProvider<ICharacterDataProvider>();

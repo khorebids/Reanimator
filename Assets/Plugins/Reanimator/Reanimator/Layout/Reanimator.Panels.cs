@@ -246,7 +246,8 @@ public partial class Reanimator : EditorWindow
             bottomToolMode == ReanimatorToolMode.PreviewPose ||
             bottomToolMode == ReanimatorToolMode.Projector ||
             bottomToolMode == ReanimatorToolMode.VertexCull ||
-            bottomToolMode == ReanimatorToolMode.Face)
+            bottomToolMode == ReanimatorToolMode.Face ||
+            bottomToolMode == ReanimatorToolMode.SoftContour)
             SetBottomToolMode(ReanimatorToolMode.NoSettings);
     }
 
@@ -282,6 +283,9 @@ public partial class Reanimator : EditorWindow
     private void SetBottomToolMode(ReanimatorToolMode mode)
     {
         mode = ReanimatorToolModeAlgorithms.NormalizeToolMode(mode);
+        if (bottomToolMode == ReanimatorToolMode.SoftContour &&
+            mode != ReanimatorToolMode.SoftContour && layerPreviewRenderer != null)
+            layerPreviewRenderer.SelectingSoftContourPoints = false;
         CommitBoneEditRestPoseIfLeaving(mode);
 
         if (ReanimatorToolModeAlgorithms.ShouldCancelOnTransition(bottomToolMode, mode, ReanimatorToolCancelTarget.Elbow))
@@ -548,6 +552,7 @@ public partial class Reanimator : EditorWindow
                 case "geometry.joint":
                     return "Joint";
                 case "geometry.boob":
+                case "geometry.soft-contour":
                     return "Boob";
                 case "geometry.volume-curve":
                     return "Volume";
@@ -690,6 +695,10 @@ public partial class Reanimator : EditorWindow
                 case "geometry.edit":
                 case "geometry.limbs":
                 case "geometry.joint":
+                case "geometry.boob":
+                case "geometry.circle-clean":
+                case "geometry.retriangulate":
+                case "geometry.vertex-cull":
                 case "weights.slider":
                 case "utility.generate-missing-geometry":
                 case "utility.kill-selected-sprite-weights":
@@ -709,6 +718,10 @@ public partial class Reanimator : EditorWindow
             case "Default Geometry":
             case "Limbs":
             case "Joint":
+            case "Boob":
+            case "CirCl":
+            case "ReTri":
+            case "Cull":
             case "Generate Missing Geometry":
             case "Kill Weights":
             case "CopyBon":
@@ -1236,6 +1249,7 @@ public partial class Reanimator : EditorWindow
     private sealed class NamingIndicatorIssueState
     {
         public PsdLayerPreviewRenderer.LayerInfo ArmOrderLayer;
+        public readonly List<PsdLayerPreviewRenderer.LayerInfo> SwappedArmLayers = new();
         public PsdLayerPreviewRenderer.LayerInfo LegOrderLayer;
         public readonly List<PsdLayerPreviewRenderer.LayerInfo> DuplicateLayers = new List<PsdLayerPreviewRenderer.LayerInfo>();
     }
@@ -1376,10 +1390,8 @@ public partial class Reanimator : EditorWindow
             }
         }
 
-        if (IsNamingIndicatorLeftPartRightOfRightPart(leftArm, rightArm))
-            result.ArmOrderLayer = leftArm;
-        else if (IsNamingIndicatorLeftPartRightOfRightPart(leftArm2, rightArm2))
-            result.ArmOrderLayer = leftArm2;
+        AddSwappedArmPair(leftArm, rightArm);
+        AddSwappedArmPair(leftArm2, rightArm2);
         if (IsNamingIndicatorLeftPartRightOfRightPart(leftLeg, rightLeg))
             result.LegOrderLayer = leftLeg;
 
@@ -1395,6 +1407,15 @@ public partial class Reanimator : EditorWindow
         }
 
         return result;
+
+        void AddSwappedArmPair(PsdLayerPreviewRenderer.LayerInfo left, PsdLayerPreviewRenderer.LayerInfo right)
+        {
+            if (!IsNamingIndicatorLeftPartRightOfRightPart(left, right))
+                return;
+            result.ArmOrderLayer ??= left;
+            result.SwappedArmLayers.Add(left);
+            result.SwappedArmLayers.Add(right);
+        }
     }
 
     private static bool IsNamingIndicatorLeftPartRightOfRightPart(
@@ -1433,12 +1454,12 @@ public partial class Reanimator : EditorWindow
                 new Rect(x, warningStartY, NamingIndicatorDiagnosticButtonWidth, NamingIndicatorDiagnosticButtonHeight),
                 "WA",
                 new Color(0.86f, 0.12f, 0.1f, 1f),
-                "WA — Wrong Arms\nНазвания/стороны спрайтов рук перепутаны относительно их положения. Нажми WA: будет выбран подозрительный l_arm. Переименуй или поменяй местами l_arm и r_arm, пока WA не исчезнет. Красный WA полностью блокирует ALLIN.",
+                "WA — Wrong Arms\nНажми WA, чтобы поменять местами имена перепутанных слоёв рук в исходном PSD. Красный WA блокирует ALLIN.",
                 out var tooltip);
             if (!string.IsNullOrEmpty(tooltip))
                 hoveredTooltip = tooltip;
             if (clicked)
-                SelectNamingIndicatorIssueLayer(issues.ArmOrderLayer);
+                SwapNamingIndicatorArmNames(path, issues.SwappedArmLayers);
         }
 
         var legY = warningStartY + NamingIndicatorDiagnosticButtonHeight + NamingIndicatorDiagnosticGap;
@@ -1546,6 +1567,38 @@ public partial class Reanimator : EditorWindow
             height);
 
         GUI.Box(cardRect, content, style);
+    }
+
+    private void SwapNamingIndicatorArmNames(string path, List<PsdLayerPreviewRenderer.LayerInfo> layers)
+    {
+        var ids = layers.Select(layer => layer.layerId).ToArray();
+        var names = layers.Select(layer => layer.name).ToArray();
+        var spriteGuids = layers.Select(layer => layer.spriteGuid).ToArray();
+        EditorApplication.delayCall += () =>
+        {
+            if (this == null)
+                return;
+            if (layerPreviewRenderer != null && layerPreviewRenderer.HasPendingChanges)
+            {
+                ShowNotification(new GUIContent("Apply pending changes before using WA"));
+                return;
+            }
+
+            try
+            {
+                ReanimatorPsdArmNames.Swap(path, ids, names, spriteGuids);
+                InvalidateNamingIndicatorCaches(false);
+                layerPreviewRenderer?.MarkDirty();
+                layerPreviewRenderer?.RequestPreviewCacheRefresh(path, false);
+                DeferPreviewContent(2);
+                Repaint();
+            }
+            catch (Exception ex)
+            {
+                ReanimatorLog.Error("WA: " + ex.Message);
+                ShowNotification(new GUIContent(ex.Message));
+            }
+        };
     }
 
     private void SelectNamingIndicatorIssueLayer(PsdLayerPreviewRenderer.LayerInfo layer)

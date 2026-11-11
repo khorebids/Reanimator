@@ -99,8 +99,11 @@ public partial class PsdLayerPreviewRenderer
         return boobHasPoint;
     }
 
-    public void ClearBoobPoint()
+    public void ClearBoobPoint(bool recordUndo = false)
     {
+        if (recordUndo && (boobHasPoint))
+            RegisterUndo("Clear Boob Point");
+
         if (GUIUtility.hotControl == boobControlId && boobControlId != 0)
             GUIUtility.hotControl = 0;
         boobIsDragging = false;
@@ -149,8 +152,12 @@ public partial class PsdLayerPreviewRenderer
     public bool BoobV2HasLeftTarget => boobV2HasTargetA;
     public bool BoobV2HasRightTarget => boobV2HasTargetB;
 
-    public void ClearBoobV2()
+    public void ClearBoobV2(bool recordUndo = false)
     {
+        if (recordUndo && (IsBoobV2ItemAssigned(0) || IsBoobV2ItemAssigned(1) ||
+                           IsBoobV2ItemAssigned(2) || IsBoobV2ItemAssigned(3)))
+            RegisterUndo("Clear Boob V2");
+
         if (GUIUtility.hotControl == boobControlId && boobControlId != 0)
             GUIUtility.hotControl = 0;
         boobIsDragging = false;
@@ -170,8 +177,28 @@ public partial class PsdLayerPreviewRenderer
         boobV2LayerStableKey = string.Empty;
     }
 
+    public bool IsBoobV2ItemAssigned(int item)
+    {
+        switch (item)
+        {
+            case 0: return BoobV2HasLeftTarget;
+            case 1: return BoobV2HasRightTarget;
+            case 2: return BoobV2FirstContourPointCount > 0;
+            case 3: return BoobV2SecondContourPointCount > 0;
+            default: return false;
+        }
+    }
+
     public void ClearSelectedBoobV2()
     {
+        ClearBoobV2Item(BoobV2Selection);
+    }
+
+    public void ClearBoobV2Item(int item)
+    {
+        if (!IsBoobV2ItemAssigned(item))
+            return;
+
         if (boobV2DrawingContour >= 0 || boobV2ActiveTarget >= 0)
         {
             if (GUIUtility.hotControl == boobControlId && boobControlId != 0)
@@ -183,8 +210,8 @@ public partial class PsdLayerPreviewRenderer
             boobV2WorkingContourDoc.Clear();
         }
 
-        RegisterUndo("Clear Selected Boob V2 Item");
-        switch (BoobV2Selection)
+        RegisterUndo("Clear Boob V2 Item");
+        switch (item)
         {
             case 0:
                 boobV2HasTargetA = false;
@@ -198,7 +225,7 @@ public partial class PsdLayerPreviewRenderer
                 boobV2RawContourADoc.Clear();
                 boobV2ContourADoc.Clear();
                 break;
-            default:
+            case 3:
                 boobV2RawContourBDoc.Clear();
                 boobV2ContourBDoc.Clear();
                 break;
@@ -316,8 +343,11 @@ public partial class PsdLayerPreviewRenderer
         radiusCullHasPoint = true;
     }
 
-    public void ClearRadiusCullPoint()
+    public void ClearRadiusCullPoint(bool recordUndo = false)
     {
+        if (recordUndo && (radiusCullHasPoint))
+            RegisterUndo("Clear Radius Cull Point");
+
         if (GUIUtility.hotControl == radiusCullControlId && radiusCullControlId != 0)
             GUIUtility.hotControl = 0;
         radiusCullIsDragging = false;
@@ -332,8 +362,11 @@ public partial class PsdLayerPreviewRenderer
         InvalidateRadiusCullPreviewCache(true);
     }
 
-    public void ClearJointPoint()
+    public void ClearJointPoint(bool recordUndo = false)
     {
+        if (recordUndo && (radiusCullHasPoint || jointCenterLockEnabled))
+            RegisterUndo("Clear Joint Point");
+
         if (GUIUtility.hotControl == jointControlId && jointControlId != 0)
             GUIUtility.hotControl = 0;
         jointIsDragging = false;

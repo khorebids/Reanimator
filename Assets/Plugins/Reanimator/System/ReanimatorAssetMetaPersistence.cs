@@ -4,8 +4,61 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 
+[InitializeOnLoad]
 internal static class ReanimatorAssetMetaPersistence
 {
+    private const string UndoImportersKey = "Reanimator.NativeUndoImporters";
+
+    static ReanimatorAssetMetaPersistence()
+    {
+        Undo.undoRedoEvent += PersistImportersAfterUndo;
+    }
+
+    internal static void RegisterImporterUndo(AssetImporter importer, string operationName)
+    {
+        Undo.RegisterCompleteObjectUndo(importer, operationName);
+        var guid = AssetDatabase.AssetPathToGUID(importer.assetPath);
+        if (string.IsNullOrEmpty(guid))
+            return;
+
+        // Unity owns the snapshots. Store only the assets whose restored importer must be flushed.
+        var key = UndoImportersKey + "." + Undo.GetCurrentGroup();
+        var guids = SessionState.GetString(key, "");
+        if (Array.IndexOf(guids.Split(','), guid) < 0)
+            SessionState.SetString(key, string.IsNullOrEmpty(guids) ? guid : guids + "," + guid);
+    }
+
+    private static void PersistImportersAfterUndo(in UndoRedoInfo info)
+    {
+        var guids = SessionState.GetString(UndoImportersKey + "." + info.undoGroup, "");
+        if (string.IsNullOrEmpty(guids))
+            return;
+
+        foreach (var guid in guids.Split(','))
+        {
+            var path = AssetDatabase.GUIDToAssetPath(guid);
+            if (string.IsNullOrEmpty(path))
+                continue;
+
+            var importer = AssetImporter.GetAtPath(path);
+            if (importer == null || !EditorUtility.IsDirty(importer))
+                continue;
+
+            try
+            {
+                using (ReanimatorPsdSpritePositionPostprocessor.SuppressForAsset(path))
+                {
+                    if (AssetDatabase.WriteImportSettingsIfDirty(path))
+                        AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+                }
+            }
+            catch (Exception ex)
+            {
+                ReanimatorLog.Exception(ex);
+            }
+        }
+    }
+
     public static bool TryRewriteMetaLinesAndReimport(
         string assetPath,
         string operationName,
@@ -36,7 +89,7 @@ internal static class ReanimatorAssetMetaPersistence
         {
             var importer = AssetImporter.GetAtPath(assetPath);
             if (importer != null)
-                Undo.RegisterCompleteObjectUndo(importer, string.IsNullOrWhiteSpace(operationName) ? "Reanimator Meta Edit" : operationName);
+                RegisterImporterUndo(importer, string.IsNullOrWhiteSpace(operationName) ? "Reanimator Meta Edit" : operationName);
 
             var newLine = DetectNewLine(File.ReadAllText(metaPath));
             var lines = ReadMetaLines(metaPath);

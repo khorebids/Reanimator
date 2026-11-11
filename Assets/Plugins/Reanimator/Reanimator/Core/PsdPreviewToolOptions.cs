@@ -1,9 +1,12 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 public sealed class PsdPreviewToolOptions
 {
     public bool AutoGeometry;
     public bool Elbow;
     public bool Limb;
+    public bool LimbBone;
+    public int LimbBoneChild;
+    public bool LimbBoneCull;
     public bool Boob;
     public bool Curve;
     public bool WeightSlider;
@@ -20,6 +23,9 @@ public sealed class PsdPreviewToolOptions
         AutoGeometry = false;
         Elbow = false;
         Limb = false;
+        LimbBone = false;
+        LimbBoneChild = -1;
+        LimbBoneCull = false;
         Boob = false;
         Curve = false;
         WeightSlider = false;

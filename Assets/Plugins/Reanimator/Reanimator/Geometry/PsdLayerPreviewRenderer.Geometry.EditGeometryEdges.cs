@@ -652,6 +652,7 @@ public partial class PsdLayerPreviewRenderer
         int vertexB,
         int[] triangles)
     {
+        RegisterUndo("Create Edge");
         data.triangles = triangles;
         BuildEdgePairs(data.triangles, data.vertices.Length, out data.allEdgePairs, out data.boundaryEdgePairs);
         if (data.vertexUvs == null || data.vertexUvs.Length != data.vertices.Length)
