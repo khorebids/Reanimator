@@ -317,6 +317,7 @@ public partial class PsdLayerPreviewRenderer
             triangles = SanitizeTriangles(triangles, vertices.Length);
             if (vertices.Length >= 3 &&
                 triangles.Length >= 3 &&
+                ReanimatorImporterGeometryAlgorithms.HasClosedSpriteOutline(triangles, vertices.Length) &&
                 AutoGeometryTriangulationCoversPolygon(polygon, vertices, triangles))
                 return true;
         }

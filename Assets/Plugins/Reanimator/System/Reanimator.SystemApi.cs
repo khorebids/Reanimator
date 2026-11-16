@@ -107,6 +107,10 @@ public partial class Reanimator : EditorWindow
             return owner != null ? owner.GetDeleteAllBonesButtonLabel() : "DelBon x5";
         }
 
+        public bool CanKillData() => owner != null && IsPsdPath(ActiveAssetPath);
+
+        public void KillData() => owner?.KillPsdData();
+
         public void PressDeleteAllBones()
         {
             owner?.PressDeleteAllBones();

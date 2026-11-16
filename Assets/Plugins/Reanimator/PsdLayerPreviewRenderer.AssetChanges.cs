@@ -320,17 +320,19 @@ public partial class PsdLayerPreviewRenderer
         }
 
         var changed = false;
+        var existingNames = new HashSet<string>(StringComparer.Ordinal);
+        if (characterBones != null)
+            foreach (var bone in characterBones)
+                existingNames.Add(bone.name);
         for (var i = 0; i < syncedBones.Count; i++)
         {
             var spriteBone = syncedBones[i];
-            var desiredName = ResolveCharacterBoneName(characterBones, characterBoneIndices, i);
             var guid = NormalizeGuidString(spriteBone.guid);
-            if (string.IsNullOrWhiteSpace(desiredName) &&
-                !string.IsNullOrEmpty(guid) &&
-                boneNameByGuid.TryGetValue(guid, out var guidName))
-            {
-                desiredName = guidName;
-            }
+            var desiredName = boneNameByGuid.TryGetValue(guid, out var guidName)
+                ? guidName
+                : existingNames.Contains(spriteBone.name)
+                    ? spriteBone.name
+                    : ResolveCharacterBoneName(characterBones, characterBoneIndices, i);
 
             if (string.IsNullOrWhiteSpace(desiredName) ||
                 string.Equals(spriteBone.name, desiredName, StringComparison.Ordinal))
@@ -465,6 +467,7 @@ public partial class PsdLayerPreviewRenderer
             return false;
 
         var changed = false;
+        var existingNames = new HashSet<string>(syncData.BoneNames, StringComparer.Ordinal);
         var spriteLists = ResolveSpriteLists(importer);
         for (var listIndex = 0; listIndex < spriteLists.Count; listIndex++)
         {
@@ -489,20 +492,16 @@ public partial class PsdLayerPreviewRenderer
                 for (var boneIndex = 0; boneIndex < spriteBones.arraySize; boneIndex++)
                 {
                     var boneProp = spriteBones.GetArrayElementAtIndex(boneIndex);
-                    var desiredName = canUsePartBoneIndices
-                        ? ResolveSerializedCharacterBoneName(syncData.BoneNames, partBoneIndices, boneIndex)
-                        : string.Empty;
+                    var nameProp = boneProp?.FindPropertyRelative("name") ?? boneProp?.FindPropertyRelative("m_Name");
+                    if (nameProp == null)
+                        continue;
                     var guid = NormalizeGuidString(GetGuidStringProperty(boneProp, "guid", "m_Guid"));
-                    if (string.IsNullOrWhiteSpace(desiredName) &&
-                        !string.IsNullOrEmpty(guid) &&
-                        syncData.UniqueNameByGuid.TryGetValue(guid, out var guidName))
-                    {
-                        desiredName = guidName;
-                    }
-
-                    var nameProp = boneProp != null ? boneProp.FindPropertyRelative("name") ?? boneProp.FindPropertyRelative("m_Name") : null;
-                    if (nameProp == null ||
-                        string.IsNullOrWhiteSpace(desiredName) ||
+                    var desiredName = syncData.UniqueNameByGuid.TryGetValue(guid, out var guidName)
+                        ? guidName
+                        : canUsePartBoneIndices && !existingNames.Contains(nameProp.stringValue)
+                            ? ResolveSerializedCharacterBoneName(syncData.BoneNames, partBoneIndices, boneIndex)
+                            : string.Empty;
+                    if (string.IsNullOrWhiteSpace(desiredName) ||
                         string.Equals(nameProp.stringValue, desiredName, StringComparison.Ordinal))
                     {
                         continue;

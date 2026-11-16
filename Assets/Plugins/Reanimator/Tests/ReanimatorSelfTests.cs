@@ -412,6 +412,7 @@ internal static partial class ReanimatorSelfTests
             new Case("Fashionable maps CL folders to exact APL targets", FashionableMapsClFoldersToExactAplTargets),
             new Case("Triangulation handles concave polygons and winding safely", TriangulationHandlesConcavePolygonsAndWindingSafely),
             new Case("Generated geometry subdivision keeps valid triangles", GeneratedGeometrySubdivisionKeepsValidTriangles),
+            new Case("Importer geometry requires a closed sprite outline", ImporterGeometryRequiresClosedSpriteOutline),
             new Case("Importer geometry sanitizes preferred and fallback indices", ImporterGeometrySanitizesPreferredAndFallbackIndices),
             new Case("Importer geometry maps document points through reference triangles", ImporterGeometryMapsDocumentPointsThroughReferenceTriangles),
             new Case("Vertex insertion splits a containing triangle safely", VertexInsertionSplitsContainingTriangleSafely),

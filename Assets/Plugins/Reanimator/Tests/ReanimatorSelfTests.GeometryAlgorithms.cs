@@ -64,16 +64,15 @@ internal static partial class ReanimatorSelfTests
             "ShouldCullFullBoobVertex",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
         AssertTrue(cullMethod != null, "FullBoobs local cull predicate should be available for regression coverage.");
-        var contourArgs = new object[] { new Vector2(10f, 0f), leftContour, rightContour, 1f, 1f, false };
-        AssertTrue(cullMethod != null && (bool)cullMethod.Invoke(null, contourArgs),
-            "An old vertex exactly on the new breast contour should be culled.");
-        AssertFalse((bool)contourArgs[5], "A point on the contour should be classified through the local contour band.");
-        var nearArgs = new object[] { new Vector2(10.5f, 0f), leftContour, rightContour, 1f, 1f, false };
-        AssertTrue(cullMethod != null && (bool)cullMethod.Invoke(null, nearArgs),
-            "The nearest conflicting vertex just outside the breast contour should be culled.");
-        var farArgs = new object[] { new Vector2(15f, 0f), leftContour, rightContour, 1f, 1f, false };
+        var insideArgs = new object[] { new Vector2(9.5f, 0f), leftContour, rightContour };
+        AssertTrue((bool)cullMethod.Invoke(null, insideArgs), "An interior vertex should be culled.");
+        var contourArgs = new object[] { new Vector2(10f, 0f), leftContour, rightContour };
+        AssertFalse((bool)cullMethod.Invoke(null, contourArgs), "A vertex on the contour should survive.");
+        var nearArgs = new object[] { new Vector2(10.5f, 0f), leftContour, rightContour };
+        AssertFalse((bool)cullMethod.Invoke(null, nearArgs), "A vertex just outside the contour should survive.");
+        var farArgs = new object[] { new Vector2(15f, 0f), leftContour, rightContour };
         AssertFalse(cullMethod != null && (bool)cullMethod.Invoke(null, farArgs),
-            "A previous-tool vertex beyond the narrow outer band must not be culled.");
+            "A previous-tool vertex beyond the contour should survive.");
 
         var data = CreatePrivateNestedInstance(renderer, "LayerVertexData");
         var vertices = new[]
@@ -934,6 +933,16 @@ internal static partial class ReanimatorSelfTests
         AssertTrue(maximumFanIncidence < 10, "Retriangulation should remove the original starburst vertex.");
         AssertTriangleIndicesValid(fanTriangles, fanVertices.Length, "Retriangulated fan triangles");
         AssertTrianglesNonDegenerate(fanVertices, fanTriangles, "Retriangulated fan triangles");
+    }
+
+    private static void ImporterGeometryRequiresClosedSpriteOutline()
+    {
+        AssertTrue(ReanimatorImporterGeometryAlgorithms.HasClosedSpriteOutline(
+            new[] { 0, 1, 2, 0, 2, 3 }, 5), "A consistently wound quad should have a closed outline.");
+        AssertTrue(!ReanimatorImporterGeometryAlgorithms.HasClosedSpriteOutline(
+            new[] { 0, 1, 2, 0, 3, 2 }, 5), "Reversed winding must not leave the outline without a successor.");
+        AssertTrue(!ReanimatorImporterGeometryAlgorithms.HasClosedSpriteOutline(
+            new[] { 0, 1, 2, 0, 2, 3, 0, 2, 4 }, 5), "Three triangles cannot share a sprite edge.");
     }
 
     private static void ImporterGeometrySanitizesPreferredAndFallbackIndices()

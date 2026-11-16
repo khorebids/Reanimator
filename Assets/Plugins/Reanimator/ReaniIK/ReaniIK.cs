@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 [ExecuteAlways]
@@ -7,6 +8,39 @@ using UnityEngine;
 [DefaultExecutionOrder(0)]
 public sealed class ReaniIK : MonoBehaviour
 {
+    [Serializable]
+    public sealed class VModeEntry
+    {
+        public Transform bone;
+        public float direction;
+        public float strength = 1f;
+        public bool invert;
+
+        [NonSerialized] private Transform capturedBone, parent, grandparent;
+        [NonSerialized] private Vector3 restPosition;
+
+        internal bool TryGetOffset(out Vector3 offset)
+        {
+            offset = Vector3.zero;
+            var nextParent = bone ? bone.parent : null;
+            var nextGrandparent = nextParent ? nextParent.parent : null;
+            if (capturedBone != bone || parent != nextParent || grandparent != nextGrandparent)
+            {
+                capturedBone = bone;
+                parent = nextParent;
+                grandparent = nextGrandparent;
+                if (grandparent) restPosition = parent.localPosition;
+            }
+            if (!grandparent) return false;
+
+            var displacement = parent.localPosition - restPosition;
+            var rotated = Quaternion.AngleAxis(direction, Vector3.forward) * displacement;
+            var multiplier = invert ? -strength : strength;
+            offset = parent.InverseTransformVector(grandparent.TransformVector(rotated * multiplier));
+            return true;
+        }
+    }
+
     [Serializable]
     public sealed class SpringGroup
     {
@@ -216,13 +250,16 @@ public sealed class ReaniIK : MonoBehaviour
     public SpringGroup softContour = new SpringGroup();
     public SpringGroup frontHair = new SpringGroup { frequency = 2.8f, damping = 0.3f, maximumOffset = 0.1f };
     public SpringGroup backHair = new SpringGroup { frequency = 2.2f, damping = 0.28f, maximumOffset = 0.18f };
-    public Limb leftArm = new Limb();
+    public Limb leftArm = new Limb { flip = true };
     public Limb rightArm = new Limb();
-    public Limb leftLeg = new Limb();
+    public Limb leftLeg = new Limb { flip = true };
     public Limb rightLeg = new Limb();
     public Limb leftArm2 = new Limb();
     public Limb rightArm2 = new Limb();
     public RigBreathing2D breathing = new RigBreathing2D();
+    public List<VModeEntry> v_mode = new List<VModeEntry>();
+    private readonly List<(Transform bone, Vector3 before, Vector3 after)> vModeOffsets =
+        new List<(Transform, Vector3, Vector3)>();
     [Header("Scene Controls")]
     public bool showHipsControl = true;
     public bool showSpineControl = true;
@@ -284,6 +321,9 @@ public sealed class ReaniIK : MonoBehaviour
     public void Evaluate(float deltaTime)
     {
         RestorePose();
+        // Capture newly assigned chains before the other rig modules move them.
+        foreach (var entry in v_mode)
+            entry?.TryGetOffset(out _);
         breathing.Evaluate(transform, deltaTime);
         leftArm.Solve(ikWeight, deltaTime);
         rightArm.Solve(ikWeight, deltaTime);
@@ -295,10 +335,39 @@ public sealed class ReaniIK : MonoBehaviour
         softContour.Simulate(deltaTime);
         frontHair.Simulate(deltaTime);
         backHair.Simulate(deltaTime);
+        ApplyVMode();
+    }
+
+    private void ApplyVMode()
+    {
+        foreach (var entry in v_mode)
+        {
+            if (entry == null || !entry.TryGetOffset(out var offset) || offset == Vector3.zero)
+                continue;
+            var bone = entry.bone;
+            var before = bone.localPosition;
+            vModeOffsets.Add((bone, before, before + offset));
+        }
+
+        for (var i = 0; i < vModeOffsets.Count; i++)
+        {
+            var entry = vModeOffsets[i];
+            var before = entry.bone.localPosition;
+            var after = before + (entry.after - entry.before);
+            entry.bone.localPosition = after;
+            vModeOffsets[i] = (entry.bone, before, after);
+        }
     }
 
     private void RestorePose()
     {
+        for (var i = vModeOffsets.Count - 1; i >= 0; i--)
+        {
+            var entry = vModeOffsets[i];
+            if (entry.bone && entry.bone.localPosition == entry.after)
+                entry.bone.localPosition = entry.before;
+        }
+        vModeOffsets.Clear();
         breasts.RestorePose();
         softContour.RestorePose();
         frontHair.RestorePose();

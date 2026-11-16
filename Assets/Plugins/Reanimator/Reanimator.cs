@@ -24,7 +24,8 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
     {
         Skel = 0,
         Sprite = 1,
-        Comfimator = 2
+        Comfimator = 2,
+        AllInGraph = 3
     }
 
     private enum VisibilityElement

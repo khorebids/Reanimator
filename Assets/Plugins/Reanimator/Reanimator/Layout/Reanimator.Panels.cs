@@ -247,7 +247,8 @@ public partial class Reanimator : EditorWindow
             bottomToolMode == ReanimatorToolMode.Projector ||
             bottomToolMode == ReanimatorToolMode.VertexCull ||
             bottomToolMode == ReanimatorToolMode.Face ||
-            bottomToolMode == ReanimatorToolMode.SoftContour)
+            bottomToolMode == ReanimatorToolMode.SoftContour ||
+            bottomToolMode == ReanimatorToolMode.VGen)
             SetBottomToolMode(ReanimatorToolMode.NoSettings);
     }
 
@@ -286,6 +287,8 @@ public partial class Reanimator : EditorWindow
         if (bottomToolMode == ReanimatorToolMode.SoftContour &&
             mode != ReanimatorToolMode.SoftContour && layerPreviewRenderer != null)
             layerPreviewRenderer.SelectingSoftContourPoints = false;
+        if (bottomToolMode == ReanimatorToolMode.VGen && mode != ReanimatorToolMode.VGen)
+            layerPreviewRenderer?.CancelVGenStroke();
         CommitBoneEditRestPoseIfLeaving(mode);
 
         if (ReanimatorToolModeAlgorithms.ShouldCancelOnTransition(bottomToolMode, mode, ReanimatorToolCancelTarget.Elbow))
@@ -702,6 +705,7 @@ public partial class Reanimator : EditorWindow
                 case "weights.slider":
                 case "utility.generate-missing-geometry":
                 case "utility.kill-selected-sprite-weights":
+                case "utility.kill-data":
                 case "utility.delete-bones":
                 case "utility.copy-bones":
                 case "utility.refresh-cache":
@@ -724,6 +728,7 @@ public partial class Reanimator : EditorWindow
             case "Cull":
             case "Generate Missing Geometry":
             case "Kill Weights":
+            case "KillData":
             case "CopyBon":
             case "Copy Bones":
             case "Refresh Cache":

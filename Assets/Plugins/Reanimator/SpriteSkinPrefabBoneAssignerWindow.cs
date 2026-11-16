@@ -1560,6 +1560,77 @@ public static class SpriteSkinPrefabBoneAssignerWindow
 
 internal static class ReanimatorPrefabCooker
 {
+    internal static bool SyncCharacterSpriteBindPose(ISpriteEditorDataProvider provider)
+    {
+        provider.InitSpriteEditorDataProvider();
+        if (!provider.HasDataProvider(typeof(ICharacterDataProvider)))
+            return false;
+
+        var character = provider.GetDataProvider<ICharacterDataProvider>().GetCharacterData();
+        var spriteBones = provider.GetDataProvider<ISpriteBoneDataProvider>();
+        if (character.bones == null || character.parts == null || spriteBones == null)
+            return false;
+
+        var byName = character.bones.Select((bone, index) => (bone, index))
+            .GroupBy(item => item.bone.name ?? string.Empty, StringComparer.Ordinal)
+            .Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Key, group => group.First().index, StringComparer.Ordinal);
+        var world = new Matrix4x4[character.bones.Length];
+        var resolved = new bool[world.Length];
+        Matrix4x4 ResolveWorld(int index)
+        {
+            if (resolved[index])
+                return world[index];
+            var bone = character.bones[index];
+            var local = Matrix4x4.TRS(new Vector3(bone.position.x, bone.position.y, 0f), bone.rotation, Vector3.one);
+            var parent = bone.parentId;
+            world[index] = parent >= 0 && parent < world.Length ? ResolveWorld(parent) * local : local;
+            resolved[index] = true;
+            return world[index];
+        }
+
+        var changed = false;
+        foreach (var part in character.parts)
+        {
+            var id = new GUID(part.spriteId);
+            var bones = spriteBones.GetBones(id);
+            if (bones == null || bones.Count == 0)
+                continue;
+
+            var indices = bones.Select(bone => byName.TryGetValue(bone.name ?? string.Empty, out var index) ? index : -1).ToArray();
+            var partChanged = false;
+            for (var i = 0; i < bones.Count; i++)
+            {
+                var bone = bones[i];
+                var index = indices[i];
+                var parent = bone.parentId;
+                if (index < 0 || parent >= bones.Count || (parent >= 0 && indices[parent] < 0))
+                    continue;
+
+                var documentToLocal = parent >= 0
+                    ? ResolveWorld(indices[parent]).inverse
+                    : Matrix4x4.Translate(new Vector3(-part.spritePosition.x, -part.spritePosition.y, 0f));
+                var local = documentToLocal * ResolveWorld(index);
+                var position = new Vector3(local.m03, local.m13, bone.position.z);
+                var rotation = local.rotation;
+                if ((position - bone.position).sqrMagnitude < 1e-6f &&
+                    Mathf.Abs(Quaternion.Dot(rotation, bone.rotation)) > 0.9999999f)
+                    continue;
+
+                bone.position = position;
+                bone.rotation = rotation;
+                bones[i] = bone;
+                partChanged = true;
+            }
+            if (!partChanged)
+                continue;
+
+            spriteBones.SetBones(id, bones);
+            changed = true;
+        }
+        return changed;
+    }
+
     public static CookResult CookNextToPsd(string psdAssetPath)
     {
         var result = new CookResult { PsdAssetPath = NormalizeAssetPath(psdAssetPath) };
@@ -1574,6 +1645,19 @@ internal static class ReanimatorPrefabCooker
         {
             result.Error = "PSD asset was not found.";
             return result;
+        }
+
+        var importer = AssetImporter.GetAtPath(result.PsdAssetPath);
+        if (importer is ISpriteEditorDataProvider provider && SyncCharacterSpriteBindPose(provider))
+        {
+            using (new PsdLayerPreviewRenderer.ApplySpriteSkinSuspension(result.PsdAssetPath))
+            using (ReanimatorPsdSpritePositionPostprocessor.SuppressForAsset(result.PsdAssetPath))
+            {
+                provider.Apply();
+                EditorUtility.SetDirty(importer);
+                AssetDatabase.WriteImportSettingsIfDirty(result.PsdAssetPath);
+                AssetDatabase.ImportAsset(result.PsdAssetPath, ImportAssetOptions.ForceSynchronousImport);
+            }
         }
 
         var sprites = AssetDatabase.LoadAllAssetsAtPath(result.PsdAssetPath)
@@ -1888,7 +1972,7 @@ internal static class ReanimatorPrefabCooker
         var scale = definitionScale > 0f ? definitionScale : 1f;
         var ppu = pixelsPerUnit > 0f ? pixelsPerUnit : 100f;
         var positionPixels = new Vector2(characterPartRect.x, characterPartRect.y) * scale + importedSpritePivotPixels;
-        positionPixels -= documentPivotPixels;
+        positionPixels -= documentPivotPixels * scale;
         return new Vector3(positionPixels.x / ppu, positionPixels.y / ppu, 0f);
     }
 
@@ -1970,6 +2054,9 @@ internal static class ReanimatorPrefabCooker
         var rig = prefabRoot.GetComponent<ReaniIK>();
         if (!rig) rig = prefabRoot.AddComponent<ReaniIK>();
 
+        ConfigureVMode("v_gen_left", -90f);
+        ConfigureVMode("v_gen_right", 90f);
+
         var spine = FindCreatedBone(createdBones, "spine");
         var count = 0;
         count += ConfigureLimb(rig.leftLeg, "l_foot", true) ? 1 : 0;
@@ -1992,6 +2079,15 @@ internal static class ReanimatorPrefabCooker
         rig.breathing.rightArm.bone = rig.rightArm.upper;
         rig.breathing.enabled = rig.breathing.belly && spine;
         return count;
+
+        void ConfigureVMode(string boneName, float angle)
+        {
+            var bone = FindCreatedBone(createdBones, boneName);
+            if (!bone || rig.v_mode.Exists(entry => entry != null && entry.bone == bone))
+                return;
+
+            rig.v_mode.Add(new ReaniIK.VModeEntry { bone = bone, direction = angle, strength = 1f, invert = true });
+        }
 
         bool ConfigureLimb(ReaniIK.Limb limb, string name, bool offsetDown)
         {

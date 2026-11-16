@@ -139,6 +139,7 @@ public partial class PsdLayerPreviewRenderer
             boobV2RawContourBDoc.Clear();
             boobV2ContourADoc.Clear();
             boobV2ContourBDoc.Clear();
+            ClearVGenContours();
             boobV2LayerStableKey = string.Empty;
             curveLayerStableKey = string.Empty;
             curveSelectedLoopPositions.Clear();

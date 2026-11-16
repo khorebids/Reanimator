@@ -268,7 +268,9 @@ internal static class ReanimatorTriangulationAlgorithms
             for (var keyIndex = 0; keyIndex < keys.Count; keyIndex++)
             {
                 var edge = edges[keys[keyIndex]];
-                if (edge.secondTriangleStart < 0 || edge.nonManifold)
+                if (edge.secondTriangleStart < 0 || edge.nonManifold ||
+                    edges.ContainsKey(((ulong)(uint)Mathf.Min(edge.firstOpposite, edge.secondOpposite) << 32) |
+                                      (uint)Mathf.Max(edge.firstOpposite, edge.secondOpposite)))
                     continue;
                 if (!TryScoreRetriangulationFlip(
                         vertices,
@@ -305,9 +307,11 @@ internal static class ReanimatorTriangulationAlgorithms
             changed = true;
         }
 
-        if (changed)
-            triangles = working;
-        return changed;
+        if (!changed || !ReanimatorImporterGeometryAlgorithms.HasClosedSpriteOutline(working, vertices.Count))
+            return false;
+
+        triangles = working;
+        return true;
     }
 
     private struct RetriangulationEdge

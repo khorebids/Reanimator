@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.U2D.Animation;
@@ -18,6 +19,50 @@ public partial class PsdLayerPreviewRenderer
         int revision, int pose, int steps, float distance, float shift, int curve, float radius, bool inner) limbBonePreviewKey;
     private LayerVertexData limbBonePreviewData;
     private LimbLine limbBonePreviewLine;
+
+    internal string ApplyBellyLimb(float radius)
+    {
+        if (!TryFindBoneIndexByName("belly", out var belly) ||
+            !TryFindBoneIndexByName("spine", out var spine) ||
+            bones[spine].parentId != belly)
+            return "Belly: no belly → spine chain";
+
+        TryGetSelectedLayer(out var selection);
+        var steps = LimbContourSteps;
+        var distance = LimbContourStepDistance;
+        var shift = LimbTowardCenterShift;
+        var curve = LimbCurve;
+        try
+        {
+            LimbContourSteps = 1;
+            LimbContourStepDistance = 20.22f;
+            LimbTowardCenterShift = 0.209f;
+            LimbCurve = AnimationCurve.Linear(0f, 0f, 1f, 1f);
+
+            var candidates = vertexDataByLayerSelectionKey.Values
+                .Where(data => data?.layer != null && data.spriteBoneToRendererBone != null &&
+                               Array.IndexOf(data.spriteBoneToRendererBone, belly) >= 0)
+                .OrderByDescending(data => string.Equals(data.layer.name, "body", StringComparison.OrdinalIgnoreCase))
+                .ThenBy(data => data.layer.layerId)
+                .ToArray();
+            foreach (var candidate in candidates)
+            {
+                SelectLayer(candidate.layer);
+                if (ApplyLimbBoneWeights(belly, spine, true, radius, true, out _))
+                    return $"Belly: {candidate.layer.name}";
+            }
+
+            throw new InvalidOperationException("Belly: no weighted sprite crosses the belly bone midpoint.");
+        }
+        finally
+        {
+            LimbContourSteps = steps;
+            LimbContourStepDistance = distance;
+            LimbTowardCenterShift = shift;
+            LimbCurve = curve;
+            SelectLayer(selection);
+        }
+    }
 
     public bool ApplyLimbBoneWeights(int middle, int child, bool useCull, float radius, bool removeInner, out string message)
     {

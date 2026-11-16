@@ -144,7 +144,8 @@ public partial class PsdLayerPreviewRenderer
                 HandleBoneInput(localRect, coordinateSpace, options.AllowBoneTransformEditing, options.AllowBoneLengthEditing, boneInputOptions);
             }
             if ((string.Equals(options.ActivePreviewModule.Id, "weights.projector", StringComparison.OrdinalIgnoreCase) ||
-                 options.ActivePreviewModule is ReanimatorSoftContourModule) &&
+                 options.ActivePreviewModule is ReanimatorSoftContourModule ||
+                 options.ActivePreviewModule is ReanimatorVGenModule) &&
                 (Event.current == null || Event.current.type != EventType.Used))
                 HandleSpriteSelection(localRect, coordinateSpace, drawList);
         }

@@ -25,6 +25,7 @@ internal enum ReanimatorToolMode
     SpriteInfluence = 21,
     VolumeCurve = 22,
     Face = 23,
-    SoftContour = 24
+    SoftContour = 24,
+    VGen = 25
 }
 #endif

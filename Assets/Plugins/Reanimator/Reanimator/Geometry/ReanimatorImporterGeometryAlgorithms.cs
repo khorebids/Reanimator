@@ -212,6 +212,38 @@ internal static class ReanimatorImporterGeometryAlgorithms
         return result.Count == 0 ? Array.Empty<int>() : result.ToArray();
     }
 
+    internal static bool HasClosedSpriteOutline(IReadOnlyList<int> indices, int vertexCount)
+    {
+        if (indices == null || indices.Count < 3 || indices.Count % 3 != 0)
+            return false;
+
+        var edges = new Dictionary<(int, int), (int from, int to, bool paired)>();
+        for (var i = 0; i < indices.Count; i++)
+        {
+            var from = indices[i];
+            var to = indices[i % 3 == 2 ? i - 2 : i + 1];
+            if ((uint)from >= (uint)vertexCount || (uint)to >= (uint)vertexCount || from == to)
+                return false;
+
+            var key = (Mathf.Min(from, to), Mathf.Max(from, to));
+            if (!edges.TryGetValue(key, out var edge))
+                edges.Add(key, (from, to, false));
+            else if (edge.paired || edge.from == from)
+                return false;
+            else
+                edges[key] = (edge.from, edge.to, true);
+        }
+
+        var starts = new HashSet<int>();
+        var ends = new HashSet<int>();
+        foreach (var edge in edges.Values)
+        {
+            if (!edge.paired && (!starts.Add(edge.from) || !ends.Add(edge.to)))
+                return false;
+        }
+        return starts.Count > 0 && starts.SetEquals(ends);
+    }
+
     public static bool IsWritableImporterMeshSane(
         IReadOnlyList<Vertex2DMetaData> vertices,
         IReadOnlyList<int> indices,

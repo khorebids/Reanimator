@@ -47,6 +47,11 @@ public interface IReanimatorExternalPanel
     void DrawPreviewOverlay(IReanimatorExternalPanelHost host);
 }
 
+public interface IReanimatorAllInGraphPanel
+{
+    void DrawAllInGraph();
+}
+
 public interface IReanimatorExternalCommandPanel
 {
     bool InvokeCommand(string label, IReanimatorExternalPanelHost host);
@@ -81,7 +86,10 @@ public interface IReanimatorExternalPanelHost
         bool includeFingers,
         bool includeBreastControls,
         bool includeEyeControls);
-    string ApplyDeterministicAutoWeights();
+    string ApplyDeterministicAutoWeights(int regions = -1, bool applyLimbs = true);
+    string[] ApplySelectedAutoLimbJoints(int joints);
+    string ApplyBellyLimb();
+    string GenerateMissingGeometry();
     string ApplyFaceEyesAutomation();
     string LocateNipples(
         out Vector2 leftDocumentPoint,

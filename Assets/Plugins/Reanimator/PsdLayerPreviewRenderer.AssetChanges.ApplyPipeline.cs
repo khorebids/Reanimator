@@ -49,6 +49,8 @@ public partial class PsdLayerPreviewRenderer
                 return false;
 
             ApplySerializedPreviewStateStage(session);
+            if (!ValidateApplyCharacterBindings(session, repair: true, out error))
+                return false;
 
             if (!session.HasImporterChanges)
             {
@@ -60,7 +62,11 @@ public partial class PsdLayerPreviewRenderer
             StageApplyOldEditorMetadata(session);
 
             CapturePendingUiVisibilityState(session.AssetPath);
+            SaveApplyBackup(session.AssetPath, originalMetadata);
             PersistImporterMetadataAndReimport(session.AssetPath);
+            if (!RefreshApplyImporter(session, "PSD importer disappeared after Apply.", out error, markDirty: false) ||
+                !ValidateApplyCharacterBindings(session, repair: false, out error))
+                return false;
             applyCompleted = true;
             RefreshAfterCommittedApply(session);
             return true;
@@ -344,6 +350,10 @@ public partial class PsdLayerPreviewRenderer
         }
 
         session.DataProvider.InitSpriteEditorDataProvider();
+        // Skinning patches can reference bones created in the same edit.
+        // CharacterPart validation must see the new skeleton before writing their indices.
+        if (session.ShouldWritePreviewState && session.HasPendingMeshWork)
+            session.HasImporterChanges |= ApplyBoneChangesToImporter(session.Importer);
         session.HasDataProviderSpriteChanges =
             session.ShouldSyncDataProviderSpriteRects &&
             SyncSpriteRectsToDataProvider(session.DataProvider, session.DirtyLayerSpriteSnapshot);
@@ -381,7 +391,7 @@ public partial class PsdLayerPreviewRenderer
         return RefreshApplyImporter(session, missingImporterError, out error);
     }
 
-    private bool RefreshApplyImporter(ApplySession session, string missingImporterError, out string error)
+    private bool RefreshApplyImporter(ApplySession session, string missingImporterError, out string error, bool markDirty = true)
     {
         error = null;
         session.Importer = AssetImporter.GetAtPath(session.AssetPath) as PSDImporter;
@@ -392,7 +402,8 @@ public partial class PsdLayerPreviewRenderer
         }
 
         session.DataProvider = session.Importer as ISpriteEditorDataProvider;
-        EditorUtility.SetDirty(session.Importer);
+        if (markDirty)
+            EditorUtility.SetDirty(session.Importer);
         return true;
     }
 
@@ -409,6 +420,98 @@ public partial class PsdLayerPreviewRenderer
         }
 
         session.HasImporterChanges |= SyncSerializedSpriteBoneNamesFromCharacterData(session.Importer);
+    }
+
+    private static bool ValidateApplyCharacterBindings(ApplySession session, bool repair, out string error)
+    {
+        error = null;
+        var provider = session.DataProvider;
+        if (provider == null || !provider.HasDataProvider(typeof(ICharacterDataProvider)))
+            return true;
+
+        provider.InitSpriteEditorDataProvider();
+        var characterProvider = provider.GetDataProvider<ICharacterDataProvider>();
+        var spriteBones = provider.GetDataProvider<ISpriteBoneDataProvider>();
+        if (characterProvider == null || spriteBones == null)
+            return true;
+
+        var character = characterProvider.GetCharacterData();
+        if (character.bones == null || character.bones.Length == 0 || character.parts == null)
+            return true;
+
+        var byGuid = BuildUniqueCharacterBoneIndex(character.bones, bone => NormalizeGuidString(bone.guid));
+        var byName = BuildUniqueCharacterBoneIndex(character.bones, bone => bone.name);
+        var changed = false;
+        foreach (var sprite in provider.GetSpriteRects())
+        {
+            var id = sprite.spriteID.ToString();
+            var partIndex = Array.FindIndex(character.parts,
+                part => string.Equals(part.spriteId, id, StringComparison.OrdinalIgnoreCase));
+            if (partIndex < 0)
+                continue;
+
+            var slots = spriteBones.GetBones(sprite.spriteID);
+            var part = character.parts[partIndex];
+            var expected = new int[slots?.Count ?? 0];
+            for (var slot = 0; slot < expected.Length; slot++)
+            {
+                var bone = slots[slot];
+                if (byGuid.TryGetValue(NormalizeGuidString(bone.guid), out expected[slot]) ||
+                    (!string.IsNullOrWhiteSpace(bone.name) && byName.TryGetValue(bone.name, out expected[slot])))
+                    continue;
+
+                // An existing slot can disambiguate duplicate names only if the name still agrees.
+                var existing = part.bones != null && slot < part.bones.Length ? part.bones[slot] : -1;
+                if ((uint)existing < (uint)character.bones.Length && !string.IsNullOrWhiteSpace(bone.name) &&
+                    string.Equals(character.bones[existing].name, bone.name, StringComparison.OrdinalIgnoreCase))
+                {
+                    expected[slot] = existing;
+                    continue;
+                }
+
+                error = $"Apply cannot verify bone '{bone.name}' in sprite '{sprite.name}' (slot {slot}).";
+                return false;
+            }
+
+            if (AreIndicesEqual(part.bones ?? Array.Empty<int>(), expected))
+                continue;
+            if (!repair)
+            {
+                error = $"PSD reimport changed the bone bindings for '{sprite.name}'.";
+                return false;
+            }
+            part.bones = expected;
+            character.parts[partIndex] = part;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            characterProvider.SetCharacterData(character);
+            session.HasImporterChanges = true;
+        }
+        return true;
+    }
+
+    private static Dictionary<string, int> BuildUniqueCharacterBoneIndex(
+        IReadOnlyList<UnityEngine.U2D.SpriteBone> bones, Func<UnityEngine.U2D.SpriteBone, string> getKey)
+    {
+        var indices = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var duplicates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < bones.Count; i++)
+        {
+            var key = getKey(bones[i]);
+            if (string.IsNullOrWhiteSpace(key) || duplicates.Contains(key))
+                continue;
+            if (indices.ContainsKey(key))
+            {
+                indices.Remove(key);
+                duplicates.Add(key);
+            }
+            else
+                indices.Add(key, i);
+        }
+        return indices;
     }
 
     private void CompleteNoOpApply(ApplySession session)

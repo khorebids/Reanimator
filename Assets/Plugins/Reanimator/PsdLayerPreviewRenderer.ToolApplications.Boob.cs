@@ -1996,6 +1996,17 @@ public partial class PsdLayerPreviewRenderer
         var viewerLeftBoobRenderer = directCost <= swappedCost ? firstBoobBone : secondBoobBone;
         var viewerRightBoobRenderer = directCost <= swappedCost ? secondBoobBone : firstBoobBone;
 
+        return TryRebuildPairedContours(data, leftCenter, rightCenter, leftContour, rightContour,
+            spineRendererBone, viewerLeftBoobRenderer, viewerRightBoobRenderer, false, out result, out error);
+    }
+
+    private bool TryRebuildPairedContours(LayerVertexData data, Vector2 leftCenter, Vector2 rightCenter,
+        Vector2[] leftContour, Vector2[] rightContour, int parentBone, int leftBone, int rightBone,
+        bool vGen, out string result, out string error)
+    {
+        result = string.Empty;
+        error = string.Empty;
+        var layer = data.layer;
         var previousVertices = CloneArray(data.vertices);
         var previousUvs = CloneArray(data.vertexUvs);
         var previousWeights = CloneArray(data.boneWeights);
@@ -2027,7 +2038,8 @@ public partial class PsdLayerPreviewRenderer
             data.lastPoseVersion = previousLastPoseVersion;
         }
 
-        RegisterUndo("FullBoobs Geometry And Weights");
+        if (!vGen)
+            RegisterUndo("FullBoobs Geometry And Weights");
         if (!TryResolveFullBoobOuterBoundaryLoop(data, out var outerBoundaryLoop))
         {
             RestorePreviousState();
@@ -2035,43 +2047,19 @@ public partial class PsdLayerPreviewRenderer
             return false;
         }
 
-        var outerBoundaryMask = new bool[data.vertices.Length];
-        for (var i = 0; i < outerBoundaryLoop.Count; i++)
-        {
-            var vertexIndex = outerBoundaryLoop[i];
-            if (vertexIndex >= 0 && vertexIndex < outerBoundaryMask.Length)
-                outerBoundaryMask[vertexIndex] = true;
-        }
+        var bodyContour = new Vector2[outerBoundaryLoop.Count];
+        for (var i = 0; i < bodyContour.Length; i++)
+            bodyContour[i] = data.vertices[outerBoundaryLoop[i]];
+        leftContour = SplitFullBoobContour(leftContour, bodyContour).ToArray();
+        rightContour = SplitFullBoobContour(rightContour, bodyContour).ToArray();
         var removeMask = new bool[data.vertices.Length];
-        var leftLocalCullDistance = CalculateFullBoobLocalCullDistance(leftContour);
-        var rightLocalCullDistance = CalculateFullBoobLocalCullDistance(rightContour);
         var removedVertices = 0;
-        var removedInsideBreasts = 0;
-        var removedNearOutsideBreasts = 0;
         for (var i = 0; i < data.vertices.Length; i++)
         {
-            if (i < outerBoundaryMask.Length && outerBoundaryMask[i])
+            if (!ShouldCullFullBoobVertex(data.vertices[i], leftContour, rightContour))
                 continue;
-
-            if (!ShouldCullFullBoobVertex(
-                    data.vertices[i],
-                    leftContour,
-                    rightContour,
-                    leftLocalCullDistance,
-                    rightLocalCullDistance,
-                    out var insideBreasts))
-                continue;
-
-            // FullBoobs is a local replacement. Remove the old vertices inside
-            // either breast plus one narrow conflicting band immediately outside
-            // the manual contours. Every earlier tool vertex beyond that band,
-            // together with its UV and weights, must survive unchanged.
             removeMask[i] = true;
             removedVertices++;
-            if (insideBreasts)
-                removedInsideBreasts++;
-            else
-                removedNearOutsideBreasts++;
         }
         // Compact once without intermediate triangulation. The final constrained
         // tessellation receives every retained vertex, so repeated FullBoobs and
@@ -2082,8 +2070,8 @@ public partial class PsdLayerPreviewRenderer
                 outerBoundaryLoop,
                 leftContour,
                 rightContour,
-                leftLocalCullDistance,
-                rightLocalCullDistance,
+                0f,
+                0f,
                 out var retainedVertexCount,
                 out var retainedTopologyConstraints,
                 out var retainedTopologyTriangles))
@@ -2093,9 +2081,9 @@ public partial class PsdLayerPreviewRenderer
             return false;
         }
 
-        if (!TryEnsureFullBoobSpriteBone(data, spineRendererBone, out var spineSpriteBone) ||
-            !TryEnsureFullBoobSpriteBone(data, viewerLeftBoobRenderer, out var viewerLeftBoobSprite) ||
-            !TryEnsureFullBoobSpriteBone(data, viewerRightBoobRenderer, out var viewerRightBoobSprite))
+        if (!TryEnsureFullBoobSpriteBone(data, parentBone, out var spineSpriteBone) ||
+            !TryEnsureFullBoobSpriteBone(data, leftBone, out var viewerLeftBoobSprite) ||
+            !TryEnsureFullBoobSpriteBone(data, rightBone, out var viewerRightBoobSprite))
         {
             RestorePreviousState();
             error = "Failed to bind boob bones to body sprite";
@@ -2117,6 +2105,7 @@ public partial class PsdLayerPreviewRenderer
             leftContour,
             spineSpriteBone,
             viewerLeftBoobSprite,
+            vGen ? 0.5f : 0f,
             vertices,
             uvs,
             weights,
@@ -2129,12 +2118,15 @@ public partial class PsdLayerPreviewRenderer
             rightContour,
             spineSpriteBone,
             viewerRightBoobSprite,
+            vGen ? 0.5f : 0f,
             vertices,
             uvs,
             weights,
             smoothRingVertexIndices,
             fullBoobConstraints,
             fullBoobLocalTriangles);
+        data.boundaryEdgePairs = BuildFullBoobExterior(bodyContour, leftContour, rightContour,
+            layer, vertices, uvs, weights);
         data.vertices = vertices.ToArray();
         data.vertexUvs = uvs.ToArray();
         data.boneWeights = weights.ToArray();
@@ -2143,50 +2135,113 @@ public partial class PsdLayerPreviewRenderer
         // those holes with deterministic local ring triangles. Treating every
         // breast point as an unconstrained global Delaunay point creates long
         // star-fan edges from the nipple rings to the remote body boundary.
-        var usedTopologyOnlyRecovery = false;
-        if (!TryRetriangulateFullBoobsWithConstraints(
-                data,
-                fullBoobConstraints,
-                retainedVertexCount,
-                retainedTopologyConstraints.Count))
-        {
-            // The generated local rings are themselves deterministic valid
-            // topology. If the editor tessellator is unavailable or rejects even
-            // the repaired boundary-only graph, retain every unaffected old
-            // triangle and finish with the local rebuild instead of exposing a
-            // recoverable terminal failure.
-            data.triangles = Array.Empty<int>();
-            usedTopologyOnlyRecovery = true;
-        }
-
-        data.triangles = BuildFullBoobCombinedTriangles(
-            data.vertices,
-            data.triangles,
-            leftContour,
-            rightContour,
-            retainedTopologyTriangles,
-            fullBoobLocalTriangles);
-
-        data.triangles = SanitizeTriangles(data.triangles, data.vertices.Length);
-        if (data.triangles == null || data.triangles.Length < 3)
+        var exterior = data.boundaryEdgePairs;
+        if (!TryBuildFinalMesh(fullBoobConstraints, retainedTopologyConstraints.Count) &&
+            !TryBuildFinalMesh(fullBoobConstraints.GetRange(retainedTopologyConstraints.Count,
+                fullBoobConstraints.Count - retainedTopologyConstraints.Count), 0) &&
+            !TryBuildWholeMesh(true) && !TryBuildWholeMesh(false))
         {
             RestorePreviousState();
-            error = "FullBoobs geometry produced no valid triangles";
+            error = (vGen ? "V-gen" : "FullBoobs") + " could not rebuild a closed mesh with the requested exterior";
             return false;
         }
-        BuildEdgePairs(data.triangles, data.vertices.Length, out data.allEdgePairs, out data.boundaryEdgePairs);
-        var smoothedVertices = SmoothFullBoobRingWeights(data, smoothRingVertexIndices, 0.5f);
+
+        bool TryBuildFinalMesh(IReadOnlyList<Vector2Int> constraints, int recoverableCount)
+        {
+            data.boundaryEdgePairs = exterior;
+            if (!TryRetriangulateFullBoobsWithConstraints(data, constraints, retainedVertexCount, recoverableCount))
+                return false;
+            data.triangles = SanitizeTriangles(BuildFullBoobCombinedTriangles(data.vertices, data.triangles,
+                leftContour, rightContour, retainedTopologyTriangles, fullBoobLocalTriangles), data.vertices.Length);
+            return HasExpectedExterior();
+        }
+
+        bool TryBuildWholeMesh(bool constrainRings)
+        {
+            data.boundaryEdgePairs = exterior;
+            var constraints = new List<Vector2Int>(retainedTopologyConstraints);
+            if (!constrainRings)
+            {
+                constraints.Clear();
+                BuildEdgePairs(retainedTopologyTriangles.ToArray(), data.vertices.Length, out _, out var patchEdges);
+                for (var i = 0; i < patchEdges.Length; i += 2)
+                    constraints.Add(new Vector2Int(patchEdges[i], patchEdges[i + 1]));
+            }
+            for (var i = 0; constrainRings && i < fullBoobLocalTriangles.Count; i += 3)
+            {
+                var a = fullBoobLocalTriangles[i];
+                var b = fullBoobLocalTriangles[i + 1];
+                var c = fullBoobLocalTriangles[i + 2];
+                constraints.Add(new Vector2Int(a, b));
+                constraints.Add(new Vector2Int(b, c));
+                constraints.Add(new Vector2Int(c, a));
+            }
+            if (!TryRetriangulateFullBoobsConstraintSet(data, constraints, data.vertices.Length, null, true))
+                return false;
+            var triangles = new List<int>(data.triangles.Length);
+            for (var i = 0; i < data.triangles.Length; i += 3)
+            {
+                var a = data.triangles[i];
+                var b = data.triangles[i + 1];
+                var c = data.triangles[i + 2];
+                var center = (data.vertices[a] + data.vertices[b] + data.vertices[c]) / 3f;
+                if (!IsPointInsideFullBoobContour(center, bodyContour) &&
+                    !IsPointInsideFullBoobContour(center, leftContour) &&
+                    !IsPointInsideFullBoobContour(center, rightContour))
+                    continue;
+                if (!constrainRings && IsInsideRetainedTriangle(center))
+                    continue;
+                triangles.Add(a);
+                triangles.Add(b);
+                triangles.Add(c);
+            }
+            if (!constrainRings)
+                triangles.AddRange(retainedTopologyTriangles);
+            data.triangles = triangles.ToArray();
+            return HasExpectedExterior();
+        }
+
+        bool IsInsideRetainedTriangle(Vector2 point)
+        {
+            for (var i = 0; i < retainedTopologyTriangles.Count; i += 3)
+                if (IsPointStrictlyInsideFullBoobTriangle(point,
+                    data.vertices[retainedTopologyTriangles[i]], data.vertices[retainedTopologyTriangles[i + 1]],
+                    data.vertices[retainedTopologyTriangles[i + 2]]))
+                    return true;
+            return false;
+        }
+
+        bool HasExpectedExterior()
+        {
+            if (data.triangles == null || data.triangles.Length < 3)
+                return false;
+            var triangleKeys = new HashSet<ulong>();
+            for (var i = 0; i < data.triangles.Length; i += 3)
+                triangleKeys.Add(MakeFullBoobTriangleKey(data.triangles[i], data.triangles[i + 1], data.triangles[i + 2]));
+            for (var i = 0; i < retainedTopologyTriangles.Count; i += 3)
+                if (!triangleKeys.Contains(MakeFullBoobTriangleKey(retainedTopologyTriangles[i],
+                    retainedTopologyTriangles[i + 1], retainedTopologyTriangles[i + 2])))
+                    return false;
+            BuildEdgePairs(data.triangles, data.vertices.Length, out data.allEdgePairs, out data.boundaryEdgePairs);
+            if (data.boundaryEdgePairs.Length != exterior.Length)
+                return false;
+            var actual = new HashSet<ulong>();
+            for (var i = 0; i < data.boundaryEdgePairs.Length; i += 2)
+                actual.Add(MakeEdgeKey(data.boundaryEdgePairs[i], data.boundaryEdgePairs[i + 1]));
+            for (var i = 0; i < exterior.Length; i += 2)
+                if (!actual.Contains(MakeEdgeKey(exterior[i], exterior[i + 1])))
+                    return false;
+            return true;
+        }
+        var smoothedVertices = vGen ? 0 : SmoothFullBoobRingWeights(data, smoothRingVertexIndices, 0.5f);
         MarkSkinningWeightsChanged(data);
         var stableKey = BuildKey(layer.name, layer.layerId);
         MarkEditGeometryDataChanged(data, BuildSelectionKey(layer), stableKey);
-        var addedVertices = leftContour.Length * 2 + 1 + rightContour.Length * 2 + 1;
-        result = "FullBoobs locally rebuilt " + CleanNippleLayerLabel(layer.name) +
+        var addedVertices = data.vertices.Length - retainedVertexCount;
+        result = (vGen ? "V-gen" : "FullBoobs") + " locally rebuilt " + CleanNippleLayerLabel(layer.name) +
                  ": preserved " + retainedVertexCount + " existing vertices, culled " +
-                 removedVertices + " local vertices (" + removedInsideBreasts +
-                 " inside, " + removedNearOutsideBreasts + " nearest outside), added " +
-                 addedVertices + ", smoothed " +
-                 smoothedVertices + " ring vertices" +
-                 (usedTopologyOnlyRecovery ? ", repaired stale tessellation topology" : string.Empty);
+                 removedVertices + " interior vertices, added " +
+                 addedVertices + (vGen ? string.Empty : ", smoothed " + smoothedVertices + " ring vertices");
         return true;
     }
 
@@ -2199,27 +2254,50 @@ public partial class PsdLayerPreviewRenderer
             return false;
 
         if (TryBuildBoundaryLoopFromPairs(data.boundaryEdgePairs, data.vertices.Length, out boundaryLoop) &&
-            boundaryLoop.Count >= 3)
+            boundaryLoop.Count * 2 == data.boundaryEdgePairs.Length)
         {
             return true;
         }
 
         if (data.triangles != null && data.triangles.Length >= 3)
         {
-            BuildEdgePairs(data.triangles, data.vertices.Length, out _, out var triangleBoundaryPairs);
+            BuildEdgePairs(data.triangles, data.vertices.Length, out var triangleEdges, out var triangleBoundaryPairs);
             if (TryBuildBoundaryLoopFromPairs(triangleBoundaryPairs, data.vertices.Length, out boundaryLoop) &&
-                boundaryLoop.Count >= 3)
+                boundaryLoop.Count * 2 == triangleBoundaryPairs.Length)
             {
+                data.allEdgePairs = triangleEdges;
                 data.boundaryEdgePairs = triangleBoundaryPairs;
                 return true;
             }
         }
 
-        // Last deterministic repair for stale/imported metadata: the hull keeps
-        // the sprite exterior and discards every generated internal FullBoobs ring.
-        boundaryLoop = ReanimatorProjectorAlgorithms.BuildStretchBoundaryLoop(data.vertices);
-        if (boundaryLoop == null || boundaryLoop.Count < 3)
+        // Recover the silhouette from the source mesh or alpha when the cached
+        // edges and triangles cannot produce a closed boundary.
+        Vector2[] sourceVertices;
+        int[] sourceEdges;
+        if (TryGetDefaultGeometrySnapshot(data.layer, out var snapshot) &&
+            TryBuildDefaultGeometryVerticesForCurrentRect(snapshot, data.layer, out sourceVertices))
+            BuildEdgePairs(snapshot.triangles, sourceVertices.Length, out _, out sourceEdges);
+        else if (!TryGenerateDefaultGeometryFromLayerHardMask(
+                     data.layer, out sourceVertices, out _, out _, out sourceEdges))
             return false;
+        if (!TryBuildBoundaryLoopFromPairs(sourceEdges, sourceVertices.Length, out var sourceLoop))
+            return false;
+
+        var vertices = new List<Vector2>(data.vertices);
+        var uvs = new List<Vector2>(data.vertexUvs != null && data.vertexUvs.Length == data.vertices.Length
+            ? data.vertexUvs
+            : BuildVertexUvsFromLayer(data.layer, data.vertices));
+        EnsureBoneWeightsArraySize(data, data.vertices.Length);
+        var weights = new List<BoneWeight>(data.boneWeights);
+        boundaryLoop = new List<int>(sourceLoop.Count);
+        foreach (var index in sourceLoop)
+            boundaryLoop.Add(FindOrAddFullBoobBoundaryPoint(data.layer, sourceVertices[index], vertices, uvs, weights));
+        data.vertices = vertices.ToArray();
+        data.vertexUvs = uvs.ToArray();
+        data.boneWeights = weights.ToArray();
+        data.triangles = Array.Empty<int>();
+        data.allEdgePairs = Array.Empty<int>();
         data.boundaryEdgePairs = BuildBoundaryPairsFromLoop(boundaryLoop);
         return data.boundaryEdgePairs != null && data.boundaryEdgePairs.Length >= 6;
     }
@@ -2277,9 +2355,6 @@ public partial class PsdLayerPreviewRenderer
             if (compactWeights != null)
                 compactWeights.Add(sourceWeights[i]);
         }
-        if (compactVertices.Count < 3)
-            return false;
-
         var compactLoop = new List<int>(boundaryLoop.Count);
         for (var i = 0; i < boundaryLoop.Count; i++)
         {
@@ -2288,9 +2363,6 @@ public partial class PsdLayerPreviewRenderer
                 continue;
             compactLoop.Add(remap[sourceIndex]);
         }
-        if (compactLoop.Count < 3)
-            return false;
-
         if (sourceAllEdges != null)
         {
             var retainedKeys = new HashSet<ulong>();
@@ -2329,6 +2401,8 @@ public partial class PsdLayerPreviewRenderer
                 if (sourceA < 0 || sourceB < 0 || sourceC < 0 ||
                     sourceA >= remap.Length || sourceB >= remap.Length || sourceC >= remap.Length ||
                     remap[sourceA] < 0 || remap[sourceB] < 0 || remap[sourceC] < 0 ||
+                    DoesFullBoobTriangleOverlapContour(sourceVertices[sourceA], sourceVertices[sourceB], sourceVertices[sourceC], leftContour) ||
+                    DoesFullBoobTriangleOverlapContour(sourceVertices[sourceA], sourceVertices[sourceB], sourceVertices[sourceC], rightContour) ||
                     !IsFullBoobEdgeOutsideLocalArea(sourceVertices[sourceA], sourceVertices[sourceB], leftContour, rightContour, leftCullDistance, rightCullDistance) ||
                     !IsFullBoobEdgeOutsideLocalArea(sourceVertices[sourceB], sourceVertices[sourceC], leftContour, rightContour, leftCullDistance, rightCullDistance) ||
                     !IsFullBoobEdgeOutsideLocalArea(sourceVertices[sourceC], sourceVertices[sourceA], leftContour, rightContour, leftCullDistance, rightCullDistance))
@@ -2354,19 +2428,106 @@ public partial class PsdLayerPreviewRenderer
         return true;
     }
 
-    private static float CalculateFullBoobLocalCullDistance(IReadOnlyList<Vector2> contour)
+    private static bool IsStrictlyInsideFullBoobContour(Vector2 point, IReadOnlyList<Vector2> contour)
     {
-        if (contour == null || contour.Count < 3)
-            return 1f;
-        var min = contour[0];
-        var max = contour[0];
-        for (var i = 1; i < contour.Count; i++)
+        return IsPointInsideFullBoobContour(point, contour) && DistanceToFullBoobContour(point, contour) > 0.001f;
+    }
+
+    private static List<Vector2> SplitFullBoobContour(IReadOnlyList<Vector2> contour, params IReadOnlyList<Vector2>[] cutters)
+    {
+        var split = new List<Vector2>(contour.Count);
+        var cuts = new List<float>();
+        for (var edge = 0; edge < contour.Count; edge++)
         {
-            min = Vector2.Min(min, contour[i]);
-            max = Vector2.Max(max, contour[i]);
+            var a = contour[edge];
+            var ab = contour[(edge + 1) % contour.Count] - a;
+            split.Add(a);
+            if (ab.sqrMagnitude < 0.000001f)
+                continue;
+            cuts.Clear();
+            foreach (var cutter in cutters)
+            {
+                for (var i = 0; i < cutter.Count; i++)
+                {
+                    var c = cutter[i];
+                    var cd = cutter[(i + 1) % cutter.Count] - c;
+                    var denominator = FullBoobCross(ab, cd);
+                    if (Mathf.Abs(denominator) < 0.000001f)
+                    {
+                        if (DistancePointToSegment(c, a, a + ab) <= 0.001f)
+                            cuts.Add(Vector2.Dot(c - a, ab) / ab.sqrMagnitude);
+                        continue;
+                    }
+                    var u = FullBoobCross(c - a, ab) / denominator;
+                    if (u >= -0.00001f && u <= 1.00001f)
+                        cuts.Add(FullBoobCross(c - a, cd) / denominator);
+                }
+            }
+            cuts.Sort();
+            foreach (var cut in cuts)
+            {
+                if (cut <= 0f || cut >= 1f)
+                    continue;
+                var point = a + ab * cut;
+                if ((point - split[split.Count - 1]).sqrMagnitude > 0.000001f &&
+                    (point - a - ab).sqrMagnitude > 0.000001f)
+                    split.Add(point);
+            }
         }
-        var localSize = Mathf.Max(1f, Mathf.Min(max.x - min.x, max.y - min.y));
-        return Mathf.Clamp(localSize * 0.035f, 1f, 10f);
+        return split;
+    }
+
+    private int[] BuildFullBoobExterior(
+        IReadOnlyList<Vector2> body, IReadOnlyList<Vector2> left, IReadOnlyList<Vector2> right,
+        LayerInfo layer, List<Vector2> vertices, List<Vector2> uvs, List<BoneWeight> weights)
+    {
+        var pairs = new List<int>();
+        var edges = new HashSet<ulong>();
+        AddExterior(SplitFullBoobContour(body, left, right), left, right);
+        AddExterior(left, body, right);
+        AddExterior(right, body, left);
+        return pairs.ToArray();
+
+        void AddExterior(IReadOnlyList<Vector2> contour, IReadOnlyList<Vector2> otherA, IReadOnlyList<Vector2> otherB)
+        {
+            for (var i = 0; i < contour.Count; i++)
+            {
+                var a = contour[i];
+                var b = contour[(i + 1) % contour.Count];
+                var midpoint = (a + b) * 0.5f;
+                if (IsStrictlyInsideFullBoobContour(midpoint, otherA) ||
+                    IsStrictlyInsideFullBoobContour(midpoint, otherB))
+                    continue;
+                var start = FindOrAddFullBoobBoundaryPoint(layer, a, vertices, uvs, weights);
+                var end = FindOrAddFullBoobBoundaryPoint(layer, b, vertices, uvs, weights);
+                if (start == end || !edges.Add(MakeEdgeKey(start, end)))
+                    continue;
+                pairs.Add(start);
+                pairs.Add(end);
+            }
+        }
+    }
+
+    private int FindOrAddFullBoobBoundaryPoint(
+        LayerInfo layer, Vector2 point, IList<Vector2> vertices, IList<Vector2> uvs, IList<BoneWeight> weights)
+    {
+        var nearest = -1;
+        var distance = float.PositiveInfinity;
+        for (var i = 0; i < vertices.Count; i++)
+        {
+            var candidate = (vertices[i] - point).sqrMagnitude;
+            if (candidate <= 0.000001f)
+                return i;
+            if (candidate < distance)
+            {
+                nearest = i;
+                distance = candidate;
+            }
+        }
+        vertices.Add(point);
+        uvs.Add(ComputeUvForPoint(layer, point));
+        weights.Add(nearest >= 0 ? weights[nearest] : default);
+        return vertices.Count - 1;
     }
 
     private static float DistanceToFullBoobContour(
@@ -2384,17 +2545,10 @@ public partial class PsdLayerPreviewRenderer
     private static bool ShouldCullFullBoobVertex(
         Vector2 point,
         IReadOnlyList<Vector2> leftContour,
-        IReadOnlyList<Vector2> rightContour,
-        float leftCullDistance,
-        float rightCullDistance,
-        out bool insideBreasts)
+        IReadOnlyList<Vector2> rightContour)
     {
-        insideBreasts = IsPointInsideFullBoobContour(point, leftContour) ||
-                        IsPointInsideFullBoobContour(point, rightContour);
-        if (insideBreasts)
-            return true;
-        return DistanceToFullBoobContour(point, leftContour) <= Mathf.Max(0f, leftCullDistance) ||
-               DistanceToFullBoobContour(point, rightContour) <= Mathf.Max(0f, rightCullDistance);
+        return IsStrictlyInsideFullBoobContour(point, leftContour) ||
+               IsStrictlyInsideFullBoobContour(point, rightContour);
     }
 
     private static bool IsFullBoobEdgeOutsideLocalArea(
@@ -2505,6 +2659,7 @@ public partial class PsdLayerPreviewRenderer
         IReadOnlyList<Vector2> contour,
         int parentSpriteBone,
         int nippleSpriteBone,
+        float contourCenterWeight,
         IList<Vector2> vertices,
         IList<Vector2> uvs,
         IList<BoneWeight> weights,
@@ -2513,13 +2668,17 @@ public partial class PsdLayerPreviewRenderer
         ICollection<int> localTriangles)
     {
         var count = contour.Count;
-        var outerStart = vertices.Count;
+        var outerIndices = new int[count];
         for (var i = 0; i < count; i++)
         {
-            vertices.Add(contour[i]);
-            uvs.Add(ComputeUvForPoint(layer, contour[i]));
-            weights.Add(BuildLimbTwoBoneWeight(parentSpriteBone, 1f, nippleSpriteBone, 0f));
-            smoothRingVertexIndices.Add(outerStart + i);
+            var vertexCount = vertices.Count;
+            var index = FindOrAddFullBoobBoundaryPoint(layer, contour[i], vertices, uvs, weights);
+            outerIndices[i] = index;
+            if (index == vertexCount || contourCenterWeight > 0f)
+                weights[index] = BuildLimbTwoBoneWeight(parentSpriteBone, 1f - contourCenterWeight,
+                    nippleSpriteBone, contourCenterWeight);
+            if (index == vertexCount)
+                smoothRingVertexIndices.Add(index);
         }
 
         var middleStart = vertices.Count;
@@ -2549,8 +2708,8 @@ public partial class PsdLayerPreviewRenderer
         for (var i = 0; i < count; i++)
         {
             var next = (i + 1) % count;
-            var outer = outerStart + i;
-            var outerNext = outerStart + next;
+            var outer = outerIndices[i];
+            var outerNext = outerIndices[next];
             var middle = middleStart + i;
             var middleNext = middleStart + next;
 
@@ -2826,7 +2985,8 @@ public partial class PsdLayerPreviewRenderer
         LayerVertexData data,
         IReadOnlyList<Vector2Int> internalConstraints,
         int includeExistingVertexCount,
-        IReadOnlyList<Vector2Int> forceIncludedConstraints)
+        IReadOnlyList<Vector2Int> forceIncludedConstraints,
+        bool centerCoordinates = false)
     {
         if (data == null || data.vertices == null || data.vertices.Length < 3 ||
             data.boundaryEdgePairs == null || data.boundaryEdgePairs.Length < 6)
@@ -2905,8 +3065,9 @@ public partial class PsdLayerPreviewRenderer
             return false;
 
         var sourceVertices = new List<Vector2>(subsetToFull.Count);
+        var origin = centerCoordinates ? data.vertices[subsetToFull[0]] : Vector2.zero;
         for (var i = 0; i < subsetToFull.Count; i++)
-            sourceVertices.Add(data.vertices[subsetToFull[i]]);
+            sourceVertices.Add(data.vertices[subsetToFull[i]] - origin);
 
         var subsetConstraints = new List<Vector2Int>(constraints.Count);
         for (var i = 0; i < constraints.Count; i++)

@@ -136,6 +136,50 @@ internal static class ReanimatorAssetMetaPersistence
         }
     }
 
+    internal static bool TryResetPsdImporter(string path, out string error)
+    {
+        error = null;
+        var metaPath = path + ".meta";
+        if (!(AssetImporter.GetAtPath(path) is UnityEditor.U2D.PSD.PSDImporter) ||
+            !TryReadMetaLines(path, out var original, out error))
+        {
+            error = error ?? "Select an imported PSD or PSB.";
+            return false;
+        }
+
+        var header = original.IndexOf("ScriptedImporter:");
+        var script = original.FindIndex(line => line.StartsWith("  script: ", StringComparison.Ordinal));
+        if (header < 0 || script <= header)
+        {
+            error = "PSD importer metadata is missing its script reference.";
+            return false;
+        }
+
+        // Keep the asset GUID and importer override. Unity rebuilds all importer data from the source.
+        var reset = original.GetRange(0, header + 1);
+        reset.Add(original[script]);
+        var newLine = DetectNewLine(File.ReadAllText(metaPath));
+        using (ReanimatorPsdSpritePositionPostprocessor.SuppressForAsset(path))
+        {
+            try
+            {
+                WriteMetaLines(metaPath, reset, newLine);
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                if (!(AssetImporter.GetAtPath(path) is UnityEditor.U2D.PSD.PSDImporter) ||
+                    AssetDatabase.LoadMainAssetAtPath(path) == null)
+                    throw new InvalidOperationException("Unity could not reimport the PSD.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                WriteMetaLines(metaPath, original, newLine);
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                error = ex.Message;
+                return false;
+            }
+        }
+    }
+
     internal static string DetectNewLine(string text)
     {
         return !string.IsNullOrEmpty(text) && text.Contains("\r\n") ? "\r\n" : "\n";

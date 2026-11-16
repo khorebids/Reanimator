@@ -14,6 +14,77 @@ public partial class PsdLayerPreviewRenderer
         return layer != null && !string.IsNullOrEmpty(layer.name) ? layer.name : "<unknown>";
     }
 
+    internal static bool RepairInvalidSpriteOutlines(string assetPath, out string error)
+    {
+        error = null;
+        var importer = AssetImporter.GetAtPath(assetPath);
+        if (!(importer is ISpriteEditorDataProvider provider))
+            return true;
+
+        provider.InitSpriteEditorDataProvider();
+        var mesh = provider.GetDataProvider<ISpriteMeshDataProvider>();
+        var texture = provider.GetDataProvider<ITextureDataProvider>();
+        if (mesh == null || texture == null)
+            return true;
+
+        var repairs = new List<(GUID id, Vertex2DMetaData[] vertices, int[] indices)>();
+        foreach (var sprite in provider.GetSpriteRects())
+        {
+            var original = mesh.GetVertices(sprite.spriteID);
+            var indices = mesh.GetIndices(sprite.spriteID);
+            if (original == null || indices == null || indices.Length == 0 ||
+                ReanimatorImporterGeometryAlgorithms.HasClosedSpriteOutline(indices, original.Length))
+                continue;
+
+            var binding = new LayerSpriteBinding { rect = sprite.rect };
+            if (!TryGenerateDefaultGeometryFromTextureRect(texture, binding, out var positions, out var rebuilt, out _, out _) ||
+                !ReanimatorImporterGeometryAlgorithms.HasClosedSpriteOutline(rebuilt, positions.Length))
+            {
+                error = $"Could not rebuild the sprite outline for '{sprite.name}'.";
+                return false;
+            }
+
+            var vertices = new Vertex2DMetaData[positions.Length];
+            for (var i = 0; i < positions.Length; i++)
+            {
+                vertices[i].position = positions[i];
+                var nearest = -1;
+                var distance = float.PositiveInfinity;
+                for (var j = 0; j < original.Length; j++)
+                {
+                    var candidate = (original[j].position - positions[i]).sqrMagnitude;
+                    if (candidate >= distance)
+                        continue;
+                    nearest = j;
+                    distance = candidate;
+                }
+
+                if (nearest >= 0)
+                    vertices[i].boneWeight = original[nearest].boneWeight;
+            }
+            repairs.Add((sprite.spriteID, vertices, rebuilt));
+        }
+
+        if (repairs.Count == 0)
+            return true;
+
+        ReanimatorAssetMetaPersistence.RegisterImporterUndo(importer, "Repair Sprite Outlines");
+        foreach (var repair in repairs)
+        {
+            mesh.SetVertices(repair.id, repair.vertices);
+            mesh.SetIndices(repair.id, repair.indices);
+            mesh.SetEdges(repair.id, BuildImporterEdgesFromIndices(repair.indices, repair.vertices.Length));
+        }
+
+        using (ReanimatorPsdSpritePositionPostprocessor.SuppressForAsset(assetPath))
+        {
+            provider.Apply();
+            AssetDatabase.WriteImportSettingsIfDirty(assetPath);
+            AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceSynchronousImport);
+        }
+        return true;
+    }
+
     public bool GenerateMissingGeometry(
         string assetPath,
         out int generatedCount,

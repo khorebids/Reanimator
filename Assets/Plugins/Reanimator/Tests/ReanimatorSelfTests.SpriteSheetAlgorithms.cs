@@ -229,10 +229,19 @@ internal static partial class ReanimatorSelfTests
 
         AssertTrue(
             PsdLayerPreviewRenderer.SyncSpriteBoneNamesFromCharacterData(characterBones, spriteBones, new[] { 0, 2, -1 }, out var indexedSyncedBones),
-            "Apply should prefer CharacterPart bone indices over GUID fallback for per-sprite bone names.");
+            "Apply should use CharacterPart indices for unresolved per-sprite bone names.");
         AssertEqual("r_foot", indexedSyncedBones[0].name, "Indexed sync should still use the selected CharacterData bone name.");
         AssertEqual("duplicate_b", indexedSyncedBones[1].name, "Indexed sync should rename even when CharacterData GUIDs are duplicated.");
         AssertEqual("bone_without_guid", indexedSyncedBones[2].name, "Invalid CharacterPart bone index should leave the sprite bone name unchanged.");
+
+        var namedBone = new[] { new SpriteBone { name = "r_foot" } };
+        AssertFalse(PsdLayerPreviewRenderer.SyncSpriteBoneNamesFromCharacterData(characterBones, namedBone,
+                new[] { 2 }, out _),
+            "A stale CharacterPart index must not replace a valid sprite bone name.");
+        AssertTrue(PsdLayerPreviewRenderer.SyncSpriteBoneNamesFromCharacterData(characterBones,
+                new[] { spriteBones[0] }, new[] { 2 }, out var guidSynced),
+            "A unique sprite bone GUID must still resolve when the CharacterPart index is stale.");
+        AssertEqual("r_foot", guidSynced[0].name, "The stable GUID must take precedence over a stale index.");
     }
 
     private static void ApplyPipelineUsesSingleSpriteDataProviderFlush()

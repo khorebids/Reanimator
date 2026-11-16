@@ -187,7 +187,10 @@ public partial class PsdLayerPreviewRenderer
             if (data.vertices == null || data.vertices.Length == 0)
                 continue;
             if (!TryResolveLayerBindingForAutoGeometryPatch(bindings, patch, out var binding, out _))
-                continue;
+            {
+                error = $"Could not match the pending mesh for '{patch.layerName}' to a PSD sprite.";
+                return false;
+            }
 
             var writeData = BuildImporterSkinningWriteData(data);
             var importerVertices = meshProvider.GetVertices(binding.spriteId) ?? Array.Empty<Vertex2DMetaData>();

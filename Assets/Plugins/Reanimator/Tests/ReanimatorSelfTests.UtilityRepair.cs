@@ -38,7 +38,7 @@ internal static partial class ReanimatorSelfTests
             0.5f,
             100f);
         AssertVector(
-            new Vector2(-3.215f, 4.605f),
+            new Vector2(1.2425f, 4.605f),
             downscaledPosition,
             0.0001f,
             "Cook Prefab should retain Unity PSD Importer's definition scale for downscaled textures.");

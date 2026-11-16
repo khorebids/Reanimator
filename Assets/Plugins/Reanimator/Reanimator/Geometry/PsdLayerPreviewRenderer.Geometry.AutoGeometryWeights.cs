@@ -322,7 +322,9 @@ public partial class PsdLayerPreviewRenderer
         return "weighted " + weightedVertices + " vertices on " + weightedLayers + " layers, skipped " + skippedLayers + " layers";
     }
 
-    public string ApplyLeftArmAutoWeights()
+    public string ApplyLeftArmAutoWeights() => ApplyLeftArmAutoWeights(true);
+
+    private string ApplyLeftArmAutoWeights(bool applyLimbs)
     {
         if (bones == null || bones.Count == 0)
             throw new InvalidOperationException("Auto Weights needs bones.");
@@ -395,6 +397,9 @@ public partial class PsdLayerPreviewRenderer
             weightedVertices += layerWeightedVertices;
         }
 
+        if (!applyLimbs)
+            return "left arm weighted " + weightedVertices + " vertices on " + weightedLayers + " layers";
+
         var primaryLimbResults = ApplyArmLimbsAfterAutoWeights(
             LeftArmAutoLimbJointSpecs,
             primaryWeightedLayers,
@@ -415,21 +420,35 @@ public partial class PsdLayerPreviewRenderer
         return ApplyLeftArmAutoWeights() + "; " + ApplyRightArmAutoWeights();
     }
 
-    public string ApplyRiggedLimbAutoWeights()
-    {
-        var result = ApplyHeadAutoWeights() + "; " +
-                     ApplyNeckAutoWeights() + "; " +
-                     ApplyFrontHairAutoWeights() + "; " +
-                     ApplyBackHairAutoWeights() + "; " +
-                     ApplyBodyAutoWeights() + "; " +
-                     ApplyLeftArmAutoWeights() + "; " +
-                     ApplyRightArmAutoWeights() + "; " +
-                     ApplyLeftLegAutoWeights() + "; " +
-                     ApplyRightLegAutoWeights();
+    public string ApplyRiggedLimbAutoWeights() => ApplyRiggedLimbAutoWeights(-1);
 
-        result += "; " +
-                  ApplyLegHipJointV2AfterAutoWeights(LeftHipAutoJointSpec) + "; " +
-                  ApplyLegHipJointV2AfterAutoWeights(RightHipAutoJointSpec);
+    public string ApplyRiggedLimbAutoWeights(int regions, bool applyLimbs = true)
+    {
+        var results = new List<string>();
+        if ((regions & (1 << 0)) != 0)
+            results.Add(ApplyHeadAutoWeights());
+        if ((regions & (1 << 1)) != 0)
+            results.Add(ApplyNeckAutoWeights());
+        if ((regions & (1 << 2)) != 0)
+            results.Add(ApplyFrontHairAutoWeights());
+        if ((regions & (1 << 3)) != 0)
+            results.Add(ApplyBackHairAutoWeights());
+        if ((regions & (1 << 4)) != 0)
+            results.Add(ApplyBodyAutoWeights());
+        if ((regions & (1 << 5)) != 0)
+            results.Add(ApplyLeftArmAutoWeights(applyLimbs));
+        if ((regions & (1 << 6)) != 0)
+            results.Add(ApplyRightArmAutoWeights(applyLimbs));
+        if ((regions & (1 << 7)) != 0)
+            results.Add(ApplyLeftLegAutoWeights(applyLimbs));
+        if ((regions & (1 << 8)) != 0)
+            results.Add(ApplyRightLegAutoWeights(applyLimbs));
+        if (applyLimbs && (regions & (1 << 9)) != 0)
+            results.Add(ApplyLegHipJointV2AfterAutoWeights(LeftHipAutoJointSpec));
+        if (applyLimbs && (regions & (1 << 10)) != 0)
+            results.Add(ApplyLegHipJointV2AfterAutoWeights(RightHipAutoJointSpec));
+        if (results.Count == 0)
+            return "No weight regions selected";
 
         var forbiddenBindings = CountForbiddenAutoWeightBoneBindings();
         if (forbiddenBindings > 0)
@@ -447,7 +466,35 @@ public partial class PsdLayerPreviewRenderer
                 crossPairBindings + " sprite layer(s) belonging to the other pair.");
         }
 
-        return result + "; boobs_root excluded from Auto Weights; arm-pair weights isolated";
+        return string.Join("; ", results) + "; boobs_root excluded from Auto Weights; arm-pair weights isolated";
+    }
+
+    internal string[] ApplySelectedAutoLimbJoints(int joints)
+    {
+        var results = new List<string>();
+        ApplySelectedArmJoints(LeftArmAutoLimbJointSpecs, joints, 0, results);
+        ApplySelectedArmJoints(RightArmAutoLimbJointSpecs, joints, 2, results);
+        if ((joints & (1 << 4)) != 0) results.Add(ApplyLeftLegKneeAutoLimbAfterAutoWeights());
+        if ((joints & (1 << 5)) != 0) results.Add(ApplyLeftLegAnkleAutoLimbAfterAutoWeights());
+        if ((joints & (1 << 6)) != 0) results.Add(ApplyRightLegKneeAutoLimbAfterAutoWeights());
+        if ((joints & (1 << 7)) != 0) results.Add(ApplyRightLegAnkleAutoLimbAfterAutoWeights());
+        if ((joints & (1 << 8)) != 0) results.Add(ApplyLegHipJointV2AfterAutoWeights(LeftHipAutoJointSpec));
+        if ((joints & (1 << 9)) != 0) results.Add(ApplyLegHipJointV2AfterAutoWeights(RightHipAutoJointSpec));
+        ApplySelectedArmJoints(LeftSecondaryArmAutoLimbJointSpecs, joints, 10, results);
+        ApplySelectedArmJoints(RightSecondaryArmAutoLimbJointSpecs, joints, 12, results);
+        return results.ToArray();
+    }
+
+    private void ApplySelectedArmJoints(AutoLimbJointSpec[] specs, int joints, int firstBit, List<string> results)
+    {
+        var selected = new List<AutoLimbJointSpec>();
+        for (var i = 0; i < specs.Length; i++)
+        {
+            if ((joints & (1 << (firstBit + i))) != 0)
+                selected.Add(specs[i]);
+        }
+        if (selected.Count > 0)
+            results.AddRange(ApplyPreparedAutoLimbSequenceAfterAutoWeights(selected));
     }
 
     public string ApplyHeadAutoWeights()
@@ -751,7 +798,9 @@ public partial class PsdLayerPreviewRenderer
         return "body midpoint-nearest whitelist weighted " + weightedVertices + " vertices on " + weightedLayers + " layers, skipped " + skippedLayers + " body candidates, ignored " + nonBodyLayers + " other layers";
     }
 
-    public string ApplyRightArmAutoWeights()
+    public string ApplyRightArmAutoWeights() => ApplyRightArmAutoWeights(true);
+
+    private string ApplyRightArmAutoWeights(bool applyLimbs)
     {
         if (bones == null || bones.Count == 0)
             throw new InvalidOperationException("Auto Weights needs bones.");
@@ -824,6 +873,9 @@ public partial class PsdLayerPreviewRenderer
             weightedVertices += layerWeightedVertices;
         }
 
+        if (!applyLimbs)
+            return "right arm weighted " + weightedVertices + " vertices on " + weightedLayers + " layers";
+
         var primaryLimbResults = ApplyArmLimbsAfterAutoWeights(
             RightArmAutoLimbJointSpecs,
             primaryWeightedLayers,
@@ -870,7 +922,9 @@ public partial class PsdLayerPreviewRenderer
             side + " arm Limbs invariant failed: " + elbowResult + "; " + wristResult);
     }
 
-    public string ApplyLeftLegAutoWeights()
+    public string ApplyLeftLegAutoWeights() => ApplyLeftLegAutoWeights(true);
+
+    private string ApplyLeftLegAutoWeights(bool applyLimbs)
     {
         if (bones == null || bones.Count == 0)
             throw new InvalidOperationException("Auto Weights needs bones.");
@@ -937,10 +991,12 @@ public partial class PsdLayerPreviewRenderer
             weightedVertices += layerWeightedVertices;
         }
 
-        return "left leg midpoint-nearest whitelist weighted " + weightedVertices + " vertices on " + weightedLayers + " layers, skipped " + skippedLayers + " left-leg candidates, ignored " + nonLeftLegLayers + " other layers; " + ApplyLeftLegKneeAutoLimbAfterAutoWeights() + "; " + ApplyLeftLegAnkleAutoLimbAfterAutoWeights();
+        return "left leg midpoint-nearest whitelist weighted " + weightedVertices + " vertices on " + weightedLayers + " layers, skipped " + skippedLayers + " left-leg candidates, ignored " + nonLeftLegLayers + " other layers" + (applyLimbs ? "; " + ApplyLeftLegKneeAutoLimbAfterAutoWeights() + "; " + ApplyLeftLegAnkleAutoLimbAfterAutoWeights() : string.Empty);
     }
 
-    public string ApplyRightLegAutoWeights()
+    public string ApplyRightLegAutoWeights() => ApplyRightLegAutoWeights(true);
+
+    private string ApplyRightLegAutoWeights(bool applyLimbs)
     {
         if (bones == null || bones.Count == 0)
             throw new InvalidOperationException("Auto Weights needs bones.");
@@ -1007,7 +1063,7 @@ public partial class PsdLayerPreviewRenderer
             weightedVertices += layerWeightedVertices;
         }
 
-        return "right leg midpoint-nearest whitelist weighted " + weightedVertices + " vertices on " + weightedLayers + " layers, skipped " + skippedLayers + " right-leg candidates, ignored " + nonRightLegLayers + " other layers; " + ApplyRightLegKneeAutoLimbAfterAutoWeights() + "; " + ApplyRightLegAnkleAutoLimbAfterAutoWeights();
+        return "right leg midpoint-nearest whitelist weighted " + weightedVertices + " vertices on " + weightedLayers + " layers, skipped " + skippedLayers + " right-leg candidates, ignored " + nonRightLegLayers + " other layers" + (applyLimbs ? "; " + ApplyRightLegKneeAutoLimbAfterAutoWeights() + "; " + ApplyRightLegAnkleAutoLimbAfterAutoWeights() : string.Empty);
     }
 
     private bool TryBuildMidpointNearestBoneWeight(Vector2 pointDoc, LayerVertexData sourceData, out BoneWeight weight)

@@ -29,6 +29,8 @@ public partial class Reanimator : EditorWindow
                 SetPreviewMode(PreviewMode.Sprite);
             if (GUILayout.Toggle(previewMode == PreviewMode.Comfimator, "Comfimator", EditorStyles.toolbarButton, GUILayout.Width(100f)))
                 SetPreviewMode(PreviewMode.Comfimator);
+            if (GUILayout.Toggle(previewMode == PreviewMode.AllInGraph, "ALLIN Graph", EditorStyles.toolbarButton, GUILayout.Width(100f)))
+                SetPreviewMode(PreviewMode.AllInGraph);
             GUILayout.FlexibleSpace();
             using (new EditorGUI.DisabledScope(!TryValidateAllInPreflight(out _)))
             {
@@ -49,6 +51,17 @@ public partial class Reanimator : EditorWindow
         var toolbarRect = GUILayoutUtility.GetLastRect();
         if (Event.current.type == EventType.Repaint)
             cachedToolbarRect = toolbarRect;
+
+        if (previewMode == PreviewMode.AllInGraph)
+        {
+            if (ReanimatorExternalPanelRegistry.TryGet("Comfimator", out var panel) &&
+                panel is IReanimatorAllInGraphPanel graph)
+                graph.DrawAllInGraph();
+            else
+                EditorGUILayout.HelpBox("Comfimator is unavailable.", MessageType.Info);
+            DrawExternalBlockingProgressOverlay();
+            return;
+        }
 
         if (previewNavigator == null)
             previewNavigator = new PreviewNavigator();
@@ -677,74 +690,55 @@ public partial class Reanimator : EditorWindow
         EditorGUI.DrawRect(line, new Color(0.12f, 0.12f, 0.12f, 1f));
     }
 
+    private static Texture2D checkerTile;
+    private static Color checkerFill;
+    private static Color checkerOutline;
+
     private static void DrawChecker(Rect rect, float size, Color a, Color b)
     {
-        if (Event.current != null && Event.current.type != EventType.Repaint)
+        if (Event.current.type != EventType.Repaint)
             return;
 
-        EditorGUI.DrawRect(rect, a);
-
-        var hexHeight = Mathf.Max(2f, size);
-        var radius = hexHeight / Mathf.Sqrt(3f);
-        var hexWidth = radius * 2f;
-        var columnStep = radius * 1.5f;
-        var rowStep = hexHeight;
-        var columnCount = Mathf.CeilToInt(rect.width / columnStep) + 4;
-        var rowCount = Mathf.CeilToInt(rect.height / rowStep) + 4;
-        var startX = rect.x - hexWidth;
-        var startY = rect.y - hexHeight;
-
-        Handles.BeginGUI();
-        var previousColor = Handles.color;
-        Handles.color = a;
-        for (var col = 0; col < columnCount; col++)
+        if (!checkerTile || checkerFill != a || checkerOutline != b)
         {
-            var centerX = startX + col * columnStep;
-            var yOffset = (col & 1) == 0 ? 0f : rowStep * 0.5f;
-            for (var row = 0; row < rowCount; row++)
-                DrawFilledFlatTopHex(new Vector2(centerX, startY + row * rowStep + yOffset), radius);
+            if (checkerTile)
+                UnityEngine.Object.DestroyImmediate(checkerTile);
+            checkerFill = a;
+            checkerOutline = b;
+            const int width = 112;
+            const int height = 64;
+            checkerTile = new Texture2D(width, height, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                wrapMode = TextureWrapMode.Repeat,
+                filterMode = FilterMode.Bilinear
+            };
+            var pixels = new Color32[width * height];
+            var columnStep = Mathf.Sqrt(3f) * 0.5f;
+            for (var y = 0; y < height; y++)
+            for (var x = 0; x < width; x++)
+            {
+                var u = (x + 0.5f) / width * 2f * columnStep;
+                var v = (y + 0.5f) / height;
+                var edge = float.PositiveInfinity;
+                for (var column = -1; column <= 3; column++)
+                {
+                    var dx = Mathf.Abs(u - column * columnStep);
+                    var row = v - ((column & 1) == 0 ? 0f : 0.5f);
+                    var dy = Mathf.Abs(row - Mathf.Round(row));
+                    var distance = Mathf.Max(dy, dx * columnStep + dy * 0.5f);
+                    edge = Mathf.Min(edge, Mathf.Abs(distance - 0.5f));
+                }
+
+                pixels[y * width + x] = Color.Lerp(a, b, 1f - Mathf.SmoothStep(0f, 1f, edge * 32f));
+            }
+            checkerTile.SetPixels32(pixels);
+            checkerTile.Apply(false, true);
         }
 
-        Handles.color = b;
-        for (var col = 0; col < columnCount; col++)
-        {
-            var centerX = startX + col * columnStep;
-            var yOffset = (col & 1) == 0 ? 0f : rowStep * 0.5f;
-            for (var row = 0; row < rowCount; row++)
-                DrawFlatTopHexInnerOutline(new Vector2(centerX, startY + row * rowStep + yOffset), radius);
-        }
-
-        Handles.color = previousColor;
-        Handles.EndGUI();
-    }
-
-    private static void DrawFilledFlatTopHex(Vector2 center, float radius)
-    {
-        var halfRadius = radius * 0.5f;
-        var halfHeight = Mathf.Sqrt(3f) * radius * 0.5f;
-        Handles.DrawAAConvexPolygon(
-            new Vector3(center.x + radius, center.y, 0f),
-            new Vector3(center.x + halfRadius, center.y + halfHeight, 0f),
-            new Vector3(center.x - halfRadius, center.y + halfHeight, 0f),
-            new Vector3(center.x - radius, center.y, 0f),
-            new Vector3(center.x - halfRadius, center.y - halfHeight, 0f),
-            new Vector3(center.x + halfRadius, center.y - halfHeight, 0f));
-    }
-
-    private static void DrawFlatTopHexInnerOutline(Vector2 center, float radius)
-    {
-        var outlineRadius = Mathf.Max(1f, radius - 0.5f);
-        var halfRadius = outlineRadius * 0.5f;
-        var halfHeight = Mathf.Sqrt(3f) * outlineRadius * 0.5f;
-        Handles.DrawAAPolyLine(
-            1f,
-            new Vector3(center.x + outlineRadius, center.y, 0f),
-            new Vector3(center.x + halfRadius, center.y + halfHeight, 0f),
-            new Vector3(center.x - halfRadius, center.y + halfHeight, 0f),
-            new Vector3(center.x - outlineRadius, center.y, 0f),
-            new Vector3(center.x - halfRadius, center.y - halfHeight, 0f),
-            new Vector3(center.x + halfRadius, center.y - halfHeight, 0f),
-            new Vector3(center.x + outlineRadius, center.y, 0f));
+        var heightInPoints = Mathf.Max(2f, size);
+        GUI.DrawTextureWithTexCoords(rect, checkerTile,
+            new Rect(0f, 0f, rect.width / (heightInPoints * Mathf.Sqrt(3f)), rect.height / heightInPoints));
     }
 
     private static void DrawCenteredLabel(Rect rect, string text)

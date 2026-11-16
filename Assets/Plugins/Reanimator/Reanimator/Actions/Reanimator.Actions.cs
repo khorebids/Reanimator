@@ -157,14 +157,67 @@ public partial class Reanimator : EditorWindow
         Repaint();
     }
 
+    private void KillPsdData()
+    {
+        var path = GetSelectedAssetPath();
+        if (!IsPsdPath(path) || !EditorUtility.DisplayDialog(
+                "KillData",
+                $"Reset all import settings and Reanimator edits for {path}? References to generated sprites may break.",
+                "Reset PSD", "Cancel"))
+            return;
+
+        ClearPendingApply();
+        CancelBoneRename();
+        EndDepthDrag();
+        SetNoSettingsToolMode();
+        layerPreviewRenderer?.StopPreviewTestAnimation();
+
+        if (!ReanimatorAssetMetaPersistence.TryResetPsdImporter(path, out var error))
+        {
+            ReanimatorLog.Error($"[Reanimator] KillData failed: {error}");
+            ShowNotification(new GUIContent(error));
+            return;
+        }
+
+        missingGeometryScanState.ClearAlert(NormalizeReanimatorAssetPath(path));
+        layerPreviewRenderer?.Revert(path);
+        ForceCleanPreviewCache();
+        ReselectAssetDeferred(path);
+        ShowNotification(new GUIContent("PSD reset"));
+    }
+
     private void GenerateMissingGeometry()
+    {
+        if (TryGenerateMissingGeometry(out var generatedCount, out var error))
+        {
+            ReselectAsset(GetSelectedAssetPath());
+            ShowNotification(new GUIContent(generatedCount > 0
+                ? $"Generated geometry: {generatedCount}"
+                : "No missing geometry"));
+            Repaint();
+        }
+        else
+        {
+            ReanimatorLog.Error($"[Reanimator] Generate Missing Geometry failed: {error}");
+            ShowNotification(new GUIContent(error));
+        }
+    }
+
+    private bool TryGenerateMissingGeometry(out int generatedCount, out string error)
     {
         CancelBoneRename();
         EndDepthDrag();
 
+        generatedCount = 0;
         var path = GetSelectedAssetPath();
+        if (!IsPsdPath(path) || layerPreviewRenderer == null)
+        {
+            error = !IsPsdPath(path) ? "Select PSD/PSB first" : "Preview renderer unavailable";
+            return false;
+        }
+
         missingGeometryScanState.ClearAlert(NormalizeReanimatorAssetPath(path));
-        TryGenerateMissingGeometry(path, true, true);
+        return layerPreviewRenderer.GenerateMissingGeometry(path, out generatedCount, out error);
     }
 
     private void FixSelectedSpriteSkinWeights()
@@ -236,45 +289,6 @@ public partial class Reanimator : EditorWindow
             missingGeometryScanState.RecordScanResult(normalizedPath, layerPreviewRenderer.HasMissingGeometry());
             Repaint();
         };
-        return true;
-    }
-
-    private bool TryGenerateMissingGeometry(string path, bool notifyUser, bool reselectAsset)
-    {
-        if (string.IsNullOrWhiteSpace(path) || !IsPsdPath(path))
-        {
-            if (notifyUser)
-                ShowNotification(new GUIContent("Select PSD/PSB first"));
-            return false;
-        }
-
-        if (layerPreviewRenderer == null)
-        {
-            if (notifyUser)
-                ShowNotification(new GUIContent("Preview renderer unavailable"));
-            return false;
-        }
-
-        if (!layerPreviewRenderer.GenerateMissingGeometry(path, out var generatedCount, out var error))
-        {
-            ReanimatorLog.Error($"[Reanimator] Generate Missing Geometry failed: {error}");
-            if (notifyUser)
-                ShowNotification(new GUIContent("Geometry generation failed"));
-            return false;
-        }
-
-        ReanimatorLog.Trace(
-            $"[Reanimator] Auto-generated missing geometry: {generatedCount}",
-            generatedCount > 0 && !notifyUser && layerPreviewRenderer.IsDebugModeEnabled);
-
-        if (reselectAsset)
-            ReselectAsset(path);
-
-        if (notifyUser)
-            ShowNotification(new GUIContent(generatedCount > 0
-                ? $"Generated geometry: {generatedCount}"
-                : "No missing geometry"));
-        Repaint();
         return true;
     }
 

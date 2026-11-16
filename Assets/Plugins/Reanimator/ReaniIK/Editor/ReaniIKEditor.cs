@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using UnityEditor;
+using UnityEditorInternal;
 using UnityEngine;
 
 [CustomEditor(typeof(ReaniIK))]
@@ -10,9 +11,40 @@ public sealed class ReaniIKEditor : Editor
     private int activePoseControl;
     private Transform activePoseBone;
     private Vector3 activePoseOffset;
+    private ReorderableList vModeList;
 
     private void OnEnable()
     {
+        vModeList = new ReorderableList(serializedObject, serializedObject.FindProperty("v_mode"), true, true, true, true);
+        vModeList.drawHeaderCallback = rect =>
+        {
+            EditorGUI.LabelField(rect, "v_mode");
+        };
+        vModeList.drawElementCallback = (rect, index, active, focused) =>
+        {
+            var entry = vModeList.serializedProperty.GetArrayElementAtIndex(index);
+            rect.y += 1f;
+            rect.height = EditorGUIUtility.singleLineHeight;
+            const float invertWidth = 54f;
+            var boneWidth = rect.width * 0.33f;
+            var valueWidth = (rect.width - boneWidth - invertWidth - 12f) * 0.5f;
+            EditorGUI.PropertyField(new Rect(rect.x, rect.y, boneWidth, rect.height),
+                entry.FindPropertyRelative("bone"), GUIContent.none);
+            var valueRect = new Rect(rect.x + boneWidth + 4f, rect.y, valueWidth, rect.height);
+            var previousLabelWidth = EditorGUIUtility.labelWidth;
+            EditorGUIUtility.labelWidth = 52f;
+            EditorGUI.PropertyField(valueRect, entry.FindPropertyRelative("direction"),
+                new GUIContent("Angle", "Rotation in degrees in the grandparent's XY plane."));
+            valueRect.x += valueWidth + 4f;
+            EditorGUI.PropertyField(valueRect, entry.FindPropertyRelative("strength"),
+                new GUIContent("Strength", "Multiplier for the parent's displacement."));
+            var invertRect = new Rect(valueRect.xMax + 4f, rect.y, invertWidth, rect.height);
+            EditorGUIUtility.labelWidth = 36f;
+            EditorGUI.PropertyField(invertRect, entry.FindPropertyRelative("invert"),
+                new GUIContent("Invert", "Reverse the resulting displacement."));
+            EditorGUIUtility.labelWidth = previousLabelWidth;
+        };
+
         var rig = (ReaniIK)target;
         foreach (var bone in rig.GetComponentsInChildren<Transform>(true))
         {
@@ -41,13 +73,14 @@ public sealed class ReaniIKEditor : Editor
     public override void OnInspectorGUI()
     {
         serializedObject.Update();
-        DrawPropertiesExcluding(serializedObject, "leftArm", "rightArm", "leftLeg", "rightLeg", "leftArm2", "rightArm2");
+        DrawPropertiesExcluding(serializedObject, "leftArm", "rightArm", "leftLeg", "rightLeg", "leftArm2", "rightArm2", "v_mode");
         DrawLimb(serializedObject.FindProperty("leftArm"));
         DrawLimb(serializedObject.FindProperty("rightArm"));
         DrawLimb(serializedObject.FindProperty("leftLeg"));
         DrawLimb(serializedObject.FindProperty("rightLeg"));
         DrawLimb(serializedObject.FindProperty("leftArm2"));
         DrawLimb(serializedObject.FindProperty("rightArm2"));
+        vModeList.DoLayoutList();
         serializedObject.ApplyModifiedProperties();
         var rig = (ReaniIK)target;
         if (GUILayout.Button("Reset spring motion"))

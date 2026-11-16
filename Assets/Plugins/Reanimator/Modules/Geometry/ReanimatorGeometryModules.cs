@@ -1,4 +1,7 @@
 #if UNITY_EDITOR
+using UnityEditor;
+using UnityEngine;
+
 internal sealed partial class ReanimatorAutoGeometryModule : ReanimatorToolModeModule
 {
     public ReanimatorAutoGeometryModule()
@@ -81,7 +84,7 @@ internal sealed partial class ReanimatorBoobModule : ReanimatorToolModeModule
 internal sealed class ReanimatorSoftContourModule : ReanimatorToolModeModule, IReanimatorPreviewModule
 {
     public ReanimatorSoftContourModule()
-        : base("geometry.soft-contour", "Geometry", 30, 130, "SC", ReanimatorToolMode.SoftContour, 80,
+        : base("geometry.soft-contour", "Geometry", 30, 60, "SC", ReanimatorToolMode.SoftContour, 30,
             DrawPanel)
     {
     }
@@ -141,6 +144,52 @@ internal sealed class ReanimatorSoftContourModule : ReanimatorToolModeModule, IR
         if (UnityEngine.GUILayout.Button("SC"))
         {
             renderer.ApplySoftContour(out var message);
+            api.ShowNotification(message);
+            api.Repaint();
+        }
+    }
+}
+
+internal sealed class ReanimatorVGenModule : ReanimatorToolModeModule, IReanimatorPreviewModule
+{
+    public ReanimatorVGenModule()
+        : base("geometry.v-gen", "Geometry", 30, 65, "V-gen", ReanimatorToolMode.VGen, 30, DrawPanel)
+    {
+    }
+
+    public bool AllowBoneInputAfterPreviewInput => true;
+    public bool OverridesSelectedGeometryPreview => false;
+
+    public void HandlePreviewInput(Reanimator.SystemApi api, ReanimatorPreviewContext context)
+    {
+        if (api?.PreviewRenderer?.HandleVGenInput(context) == true)
+            api.Repaint();
+    }
+
+    public void DrawPreviewOverlay(Reanimator.SystemApi api, ReanimatorPreviewContext context)
+    {
+        api?.PreviewRenderer?.DrawVGenContours(context?.Coordinates);
+    }
+
+    private static void DrawPanel(Reanimator.SystemApi api, float availableHeight)
+    {
+        var renderer = api?.PreviewRenderer;
+        if (renderer == null) return;
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            if (GUILayout.Button(renderer.IsDrawingVGenSide(0) ? "Drawing left" : "Draw left"))
+                renderer.SetVGenSide(0);
+            if (GUILayout.Button(renderer.IsDrawingVGenSide(1) ? "Drawing right" : "Draw right"))
+                renderer.SetVGenSide(1);
+            if (GUILayout.Button("Clear"))
+                renderer.ClearVGenContours();
+        }
+
+        using (new EditorGUI.DisabledScope(!renderer.HasVGenContours))
+        {
+            if (!GUILayout.Button("Apply V-gen")) return;
+            renderer.ApplyVGen(out var message);
             api.ShowNotification(message);
             api.Repaint();
         }

@@ -202,6 +202,18 @@ internal sealed class ReanimatorKillSelectedSpriteWeightsModule : ReanimatorActi
     }
 }
 
+internal sealed class ReanimatorKillDataModule : ReanimatorActionModule
+{
+    public ReanimatorKillDataModule()
+        : base("utility.kill-data", "Utility", 50, 48, "KillData")
+    {
+    }
+
+    public override bool IsEnabled(Reanimator.SystemApi api) => api != null && api.CanKillData();
+
+    public override void Invoke(Reanimator.SystemApi api) => api?.KillData();
+}
+
 internal sealed class ReanimatorDeleteBonesModule : ReanimatorModuleBase
 {
     public override string Id => "utility.delete-bones";

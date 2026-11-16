@@ -15,7 +15,7 @@ public partial class PsdLayerPreviewRenderer
     private Vector2? softContourDragStart;
     private Vector2 softContourDragEnd;
     private int softContourDragControl;
-    private readonly List<(Vector2 contour, Vector2 support)> softContourPairs = new();
+    private readonly List<(Vector2 contour, Vector2 support, bool soften)> softContourPairs = new();
     private float softContourPreviewDepth;
     internal float SoftContourDepth { get; set; } = 1f / 3f;
     internal bool HasSelectedSoftContourPoints => selectedSoftContourPoints.Count > 0;
@@ -34,6 +34,7 @@ public partial class PsdLayerPreviewRenderer
         if (source < 0) return false;
         var staged = CloneProjectorLayerData(data);
         var contourIndices = new HashSet<int>();
+        var softenedIndices = new HashSet<int>();
         var supportIndices = new HashSet<int>();
         foreach (var pair in softContourPairs)
         {
@@ -45,6 +46,7 @@ public partial class PsdLayerPreviewRenderer
                 return false;
             }
             contourIndices.Add(contour);
+            if (pair.soften) softenedIndices.Add(contour);
             supportIndices.Add(support);
         }
         if (contourIndices.Overlaps(supportIndices))
@@ -91,7 +93,9 @@ public partial class PsdLayerPreviewRenderer
         foreach (int index in supportIndices)
             staged.boneWeights[index] = new BoneWeight { boneIndex0 = source, weight0 = 1f };
         foreach (int index in contourIndices)
-            staged.boneWeights[index] = new BoneWeight { boneIndex0 = child, weight0 = 1f };
+            staged.boneWeights[index] = softenedIndices.Contains(index)
+                ? new BoneWeight { boneIndex0 = child, weight0 = 0.5f, boneIndex1 = source, weight1 = 0.5f }
+                : new BoneWeight { boneIndex0 = child, weight0 = 1f };
 
         data.vertices = staged.vertices;
         data.vertexUvs = staged.vertexUvs;
@@ -307,12 +311,16 @@ public partial class PsdLayerPreviewRenderer
                 Handles.color = selected ? new Color(0.1f, 1f, 0.9f) : new Color(0.62f, 0.62f, 0.62f);
                 Handles.DrawSolidDisc(point.Value, Vector3.forward, selected ? 5.5f : 3.75f);
             }
-            foreach (var point in documentPoints)
+            var selectedPoints = new List<Vector2>(selectedSoftContourPoints.Count);
+            foreach (var entry in documentPoints)
+                if (selectedSoftContourPoints.Contains(entry.Key)) selectedPoints.Add(entry.Value);
+            var softened = FindSoftContourChainEnds(selectedPoints, segments);
+            for (var i = 0; i < selectedPoints.Count; i++)
             {
-                if (!selectedSoftContourPoints.Contains(point.Key) ||
-                    !TryGetSoftContourSupport(point.Value, segments, SoftContourDepth, out var support))
+                var point = selectedPoints[i];
+                if (!TryGetSoftContourSupport(point, segments, SoftContourDepth, out var support))
                     continue;
-                softContourPairs.Add((ConvertPointToBaseDoc(data, point.Value), ConvertPointToBaseDoc(data, support)));
+                softContourPairs.Add((ConvertPointToBaseDoc(data, point), ConvertPointToBaseDoc(data, support), softened.Contains(i)));
                 Handles.color = new Color(1f, 0.24f, 0.28f);
                 Handles.DrawSolidDisc(toView(support), Vector3.forward, 4.5f);
             }
@@ -382,6 +390,55 @@ public partial class PsdLayerPreviewRenderer
                 if (!selectPoint && level == SoftContourMinimumWeight)
                     AddSegment(start, end, vertices[weights[single] >= level ? single : otherA]);
             }
+        }
+    }
+
+    internal static HashSet<int> FindSoftContourChainEnds(IReadOnlyList<Vector2> points,
+        IReadOnlyList<(Vector2 a, Vector2 b, Vector2 inward)> segments)
+    {
+        var ends = new HashSet<int>();
+        if (points.Count < 3) return ends;
+
+        var neighbors = new HashSet<int>[points.Count];
+        for (var i = 0; i < neighbors.Length; i++) neighbors[i] = new HashSet<int>();
+        foreach (var segment in segments)
+        {
+            var a = FindPoint(segment.a);
+            var b = FindPoint(segment.b);
+            if (a < 0 || b < 0 || a == b) continue;
+            neighbors[a].Add(b);
+            neighbors[b].Add(a);
+        }
+
+        for (var i = 0; i < neighbors.Length; i++)
+        {
+            if (neighbors[i].Count != 1 || ends.Contains(i)) continue;
+            var previous = i;
+            var current = i;
+            foreach (var neighbor in neighbors[i]) current = neighbor;
+            var count = 2;
+            while (neighbors[current].Count == 2)
+            {
+                var next = previous;
+                foreach (var neighbor in neighbors[current])
+                    if (neighbor != previous) next = neighbor;
+                previous = current;
+                current = next;
+                count++;
+            }
+            if (count > 2 && neighbors[current].Count == 1)
+            {
+                ends.Add(i);
+                ends.Add(current);
+            }
+        }
+        return ends;
+
+        int FindPoint(Vector2 point)
+        {
+            for (var i = 0; i < points.Count; i++)
+                if ((point - points[i]).sqrMagnitude < 1e-6f) return i;
+            return -1;
         }
     }
 

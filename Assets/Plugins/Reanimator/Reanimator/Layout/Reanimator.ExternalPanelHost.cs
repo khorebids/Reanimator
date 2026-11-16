@@ -180,12 +180,29 @@ public partial class Reanimator
         return result;
     }
 
-    string IReanimatorExternalPanelHost.ApplyDeterministicAutoWeights()
+    string[] IReanimatorExternalPanelHost.ApplySelectedAutoLimbJoints(int joints)
+    {
+        return layerPreviewRenderer.ApplySelectedAutoLimbJoints(joints);
+    }
+
+    string IReanimatorExternalPanelHost.ApplyBellyLimb()
+    {
+        return RunNativeUndoGroup("Belly", () => layerPreviewRenderer.ApplyBellyLimb(radiusCullRadius));
+    }
+
+    string IReanimatorExternalPanelHost.GenerateMissingGeometry()
+    {
+        if (!TryGenerateMissingGeometry(out var generatedCount, out var error))
+            throw new System.InvalidOperationException($"Generate Missing Geometry: {error}");
+        return generatedCount > 0 ? $"Generated geometry: {generatedCount}" : "No missing geometry";
+    }
+
+    string IReanimatorExternalPanelHost.ApplyDeterministicAutoWeights(int regions, bool applyLimbs)
     {
         if (layerPreviewRenderer == null)
             throw new System.InvalidOperationException("Reanimator preview renderer is not ready.");
 
-        var result = layerPreviewRenderer.ApplyRiggedLimbAutoWeights();
+        var result = layerPreviewRenderer.ApplyRiggedLimbAutoWeights(regions, applyLimbs);
         Repaint();
         return result;
     }
