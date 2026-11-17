@@ -127,10 +127,8 @@ public partial class PsdLayerPreviewRenderer
                                           previewData.bindBoneInverseMatrices.Length > 0;
 
                 var createdContourVertexIndices = new List<int>(generatedPoints.Count);
-                var createdContourSourceIndices = new List<int>(generatedPoints.Count);
                 var createdCenterVertexIndices = new List<int>(generatedPoints.Count);
                 var createdShiftedVertexIndices = new List<int>(generatedPoints.Count);
-                var createdShiftedSourceIndices = new List<int>(generatedPoints.Count);
                 for (var i = 0; i < generatedPoints.Count; i++)
                 {
                     var point = generatedPoints[i];
@@ -143,17 +141,13 @@ public partial class PsdLayerPreviewRenderer
                     if (point.type == LimbGeneratedPointType.Contour)
                     {
                         createdContourVertexIndices.Add(createdVertexIndex);
-                        createdContourSourceIndices.Add(point.contourSourceIndex);
                     }
                     else if (point.type == LimbGeneratedPointType.Center)
                     {
                         createdCenterVertexIndices.Add(createdVertexIndex);
                     }
                     else if (point.type == LimbGeneratedPointType.Shifted)
-                    {
                         createdShiftedVertexIndices.Add(createdVertexIndex);
-                        createdShiftedSourceIndices.Add(point.contourSourceIndex);
-                    }
                 }
 
                 if (!TryRebuildCulledLimbBoundary(sourceData, previewData, contourPoints, radius, removeInnerVertices))
@@ -189,12 +183,9 @@ public partial class PsdLayerPreviewRenderer
                             previewData,
                             sourceData,
                             line,
-                            contourPoints,
                             createdContourVertexIndices,
-                            createdContourSourceIndices,
                             createdCenterVertexIndices,
-                            createdShiftedVertexIndices,
-                            createdShiftedSourceIndices);
+                            createdShiftedVertexIndices);
 
                         cache.previewVerticesBase = previewData.vertices ?? Array.Empty<Vector2>();
                         cache.previewTriangles = previewData.triangles ?? Array.Empty<int>();

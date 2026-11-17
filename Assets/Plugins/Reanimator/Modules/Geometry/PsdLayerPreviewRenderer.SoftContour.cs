@@ -17,8 +17,132 @@ public partial class PsdLayerPreviewRenderer
     private int softContourDragControl;
     private readonly List<(Vector2 contour, Vector2 support, bool soften)> softContourPairs = new();
     private float softContourPreviewDepth;
-    internal float SoftContourDepth { get; set; } = 1f / 3f;
+    private bool softContourPreviewAutoMode;
+    private (float end, float split, bool hips) softContourPreviewSettings;
+    private int softContourAutoPointCount;
+
+    internal bool CanApplyAutoSoftContour => SoftContourAutoMode && softContourPreviewAutoMode &&
+        softContourPreviewSettings.Equals((SoftContourMaxEndAngle, SoftContourSplitAngle, SoftContourHipsMode)) &&
+        softContourPreviewDepth == SoftContourDepth && softContourAutoPointCount > 0 &&
+        softContourPairs.Count == softContourAutoPointCount &&
+        selectedBoneIndex == softContourSelectionBone &&
+        vertexDataByLayerSelectionKey.TryGetValue(selectedLayerSelectionKey ?? string.Empty, out var layer) &&
+        layer == softContourSelectionLayer && layer.triangles == softContourSelectionTriangles;
+    internal bool SoftContourAutoMode { get; set; }
+    internal bool SoftContourHipsMode { get; set; }
+    internal float SoftContourMaxEndAngle { get; set; } = 25f;
+    internal float SoftContourSplitAngle { get; set; } = 25f;
+    private float softContourSimpleDepth = 1f / 3f;
+    private float softContourAutoDepth = 0.2f;
+    internal float SoftContourDepth
+    {
+        get => SoftContourAutoMode ? softContourAutoDepth : softContourSimpleDepth;
+        set
+        {
+            if (SoftContourAutoMode)
+                softContourAutoDepth = value;
+            else
+                softContourSimpleDepth = value;
+        }
+    }
     internal bool HasSelectedSoftContourPoints => selectedSoftContourPoints.Count > 0;
+
+    internal string ApplyAllInSoftContour(int targets)
+    {
+        var originalLayer = selectedLayerSelectionKey;
+        var originalBone = selectedBoneIndex;
+        var originalAuto = SoftContourAutoMode;
+        var originalHips = SoftContourHipsMode;
+        var results = new List<string>();
+        try
+        {
+            SoftContourAutoMode = true;
+            for (var bit = 0; bit < 9; bit++)
+            {
+                if ((targets & (1 << bit)) == 0)
+                    continue;
+
+                SoftContourHipsMode = bit == 8;
+                var side = bit < 4 ? "l_" : "r_";
+                var sprite = SoftContourHipsMode ? "body" : side + (bit % 4 < 2 ? "arm" : "leg");
+                var bone = SoftContourHipsMode ? "hips" : sprite + (bit % 2 == 0 ? "" : "_1");
+                var label = sprite + " / " + bone;
+                if (!TryFindBoneIndexByName(bone, out selectedBoneIndex))
+                {
+                    results.Add(label + ": no matching bone");
+                    continue;
+                }
+
+                var layers = new List<string>();
+                foreach (var entry in vertexDataByLayerSelectionKey)
+                {
+                    var data = entry.Value;
+                    if (data?.layer != null && data.layer.visible &&
+                        string.Equals(data.layer.name, sprite, System.StringComparison.OrdinalIgnoreCase) &&
+                        FindSpriteBoneIndexForRendererBone(data, selectedBoneIndex) >= 0)
+                        layers.Add(entry.Key);
+                }
+                layers.Sort(System.StringComparer.Ordinal);
+                if (layers.Count == 0)
+                    results.Add(label + ": no matching weighted sprite");
+
+                foreach (var layer in layers)
+                {
+                    selectedLayerSelectionKey = layer;
+                    softContourPairs.Clear();
+                    softContourAutoPointCount = 0;
+                    ProcessSoftContour(null, false, draw: false);
+                    if (softContourAutoPointCount == 0)
+                    {
+                        results.Add(label + ": no eligible contour");
+                        continue;
+                    }
+
+                    if (!ApplySoftContour(out var message))
+                        throw new System.InvalidOperationException(label + ": " + message);
+                    results.Add(label + ": " + message);
+                }
+            }
+        }
+        finally
+        {
+            selectedLayerSelectionKey = originalLayer;
+            selectedBoneIndex = originalBone;
+            SoftContourAutoMode = originalAuto;
+            SoftContourHipsMode = originalHips;
+            softContourPairs.Clear();
+        }
+
+        return results.Count == 0 ? "No SC targets enabled" : string.Join("; ", results);
+    }
+
+    private bool IsSoftContourHipsPointBlocked(Vector2 point)
+    {
+        foreach (var layer in vertexDataByLayerSelectionKey.Values)
+        {
+            var name = layer?.layer?.name;
+            if ((!string.Equals(name, "l_leg", System.StringComparison.OrdinalIgnoreCase) &&
+                 !string.Equals(name, "r_leg", System.StringComparison.OrdinalIgnoreCase)) || layer.triangles == null)
+                continue;
+
+            var vertices = GetLayerVerticesForDraw(layer);
+            if (vertices == null)
+                continue;
+
+            var triangles = layer.triangles;
+            for (var i = 0; i + 2 < triangles.Length; i += 3)
+            {
+                var a = triangles[i];
+                var b = triangles[i + 1];
+                var c = triangles[i + 2];
+                if ((uint)a < vertices.Length && (uint)b < vertices.Length && (uint)c < vertices.Length &&
+                    IsPointInTriangleInclusive(point, vertices[a], vertices[b], vertices[c]))
+                    return true;
+            }
+        }
+
+        return false;
+    }
 
     internal bool ApplySoftContour(out string message)
     {
@@ -27,7 +151,8 @@ public partial class PsdLayerPreviewRenderer
             !vertexDataByLayerSelectionKey.TryGetValue(selectedLayerSelectionKey, out var data) ||
             data != softContourSelectionLayer || data.triangles != softContourSelectionTriangles ||
             selectedBoneIndex != softContourSelectionBone || SoftContourDepth != softContourPreviewDepth ||
-            softContourPairs.Count == 0 || softContourPairs.Count != selectedSoftContourPoints.Count)
+            softContourPairs.Count == 0 || softContourPreviewAutoMode != SoftContourAutoMode ||
+            (SoftContourAutoMode ? !CanApplyAutoSoftContour : softContourPairs.Count != selectedSoftContourPoints.Count))
             return false;
 
         int source = FindSpriteBoneIndexForRendererBone(data, selectedBoneIndex);
@@ -146,6 +271,12 @@ public partial class PsdLayerPreviewRenderer
     {
         if (Event.current?.type == EventType.Repaint)
         {
+            if (SoftContourDrawnBellyMode)
+            {
+                DrawSoftContourBelly(coordinates);
+                return;
+            }
+
             ProcessSoftContour(coordinates, false);
             if (softContourDragStart.HasValue)
             {
@@ -208,9 +339,9 @@ public partial class PsdLayerPreviewRenderer
     }
 
     private bool ProcessSoftContour(PsdCoordinateSpace coordinates, bool selectPoint,
-        Rect? selectionRectangle = null, bool extendSelection = false)
+        Rect? selectionRectangle = null, bool extendSelection = false, bool draw = true)
     {
-        if (coordinates == null ||
+        if ((draw && coordinates == null) ||
             !HasSoftContourSelection() ||
             !vertexDataByLayerSelectionKey.TryGetValue(selectedLayerSelectionKey, out var data) ||
             data.layer == null || !data.layer.visible || data.triangles == null || data.boneWeights == null)
@@ -228,7 +359,7 @@ public partial class PsdLayerPreviewRenderer
             softContourSelectionTriangles = data.triangles;
             softContourSelectionBone = selectedBoneIndex;
         }
-        var toView = CreateLayerVertexToViewMapper(coordinates, data, vertices);
+        System.Func<Vector2, Vector2> toView = draw ? CreateLayerVertexToViewMapper(coordinates, data, vertices) : point => point;
         var weights = new float[vertices.Length];
         for (int i = 0; i < weights.Length; i++)
             weights[i] = GetSpriteBoneWeight(data.boneWeights[i], bone);
@@ -236,15 +367,15 @@ public partial class PsdLayerPreviewRenderer
         var points = new Dictionary<(int, int), Vector2>();
         var documentPoints = new Dictionary<(int, int), Vector2>();
         var segments = new List<(Vector2 a, Vector2 b, Vector2 inward)>();
-        if (!selectPoint) Handles.BeginGUI();
+        if (draw && !selectPoint) Handles.BeginGUI();
         var previousColor = Handles.color;
         var line = new Vector3[2];
         try
         {
-            Handles.color = new Color(1f, 0.72f, 0.28f, 0.9f);
-            if (!selectPoint)
+            if (draw) Handles.color = new Color(1f, 0.72f, 0.28f, 0.9f);
+            if (draw && !selectPoint)
                 foreach (float level in SoftContourLevels) DrawLevel(level, 1.5f);
-            Handles.color = new Color(1f, 0.85f, 0.44f);
+            if (draw) Handles.color = new Color(1f, 0.85f, 0.44f);
             DrawLevel(SoftContourMinimumWeight, 3.5f);
 
             // Close the influence region where it reaches the edge of the sprite mesh.
@@ -271,6 +402,17 @@ public partial class PsdLayerPreviewRenderer
                         }
                     }
                 }
+            }
+
+            if (SoftContourAutoMode)
+            {
+                softContourPairs.Clear();
+                softContourPreviewAutoMode = true;
+                softContourPreviewDepth = SoftContourDepth;
+                softContourPreviewSettings = (SoftContourMaxEndAngle, SoftContourSplitAngle, SoftContourHipsMode);
+                softContourAutoPointCount = 0;
+                BuildAutoSoftContour(data, vertices, weights, segments, toView, draw);
+                return false;
             }
 
             if (selectPoint)
@@ -304,6 +446,7 @@ public partial class PsdLayerPreviewRenderer
             }
 
             softContourPairs.Clear();
+            softContourPreviewAutoMode = false;
             softContourPreviewDepth = SoftContourDepth;
             foreach (var point in points)
             {
@@ -327,8 +470,8 @@ public partial class PsdLayerPreviewRenderer
         }
         finally
         {
-            Handles.color = previousColor;
-            if (!selectPoint) Handles.EndGUI();
+            if (draw) Handles.color = previousColor;
+            if (draw && !selectPoint) Handles.EndGUI();
         }
         return false;
 
@@ -363,7 +506,7 @@ public partial class PsdLayerPreviewRenderer
 
         void DrawSegment(Vector2 start, Vector2 end, float width)
         {
-            if (selectPoint) return;
+            if (!draw || selectPoint) return;
             line[0] = toView(start);
             line[1] = toView(end);
             if (line[0] != line[1]) Handles.DrawAAPolyLine(width, line);
@@ -391,6 +534,227 @@ public partial class PsdLayerPreviewRenderer
                     AddSegment(start, end, vertices[weights[single] >= level ? single : otherA]);
             }
         }
+    }
+
+    private void BuildAutoSoftContour(LayerVertexData data,
+        Vector2[] vertices, float[] weights,
+        IReadOnlyList<(Vector2 a, Vector2 b, Vector2 inward)> influenceBoundary,
+        System.Func<Vector2, Vector2> toView, bool draw)
+    {
+        if (!TryBuildBoundaryLoopFromPairs(data.boundaryEdgePairs, vertices.Length, out var boundary))
+            return;
+
+        var points = new Vector2[boundary.Count];
+        var eligible = new bool[boundary.Count];
+        for (var i = 0; i < boundary.Count; i++)
+        {
+            var index = boundary[i];
+            points[i] = vertices[index];
+            eligible[i] = SoftContourHipsMode
+                ? weights[index] > 0f && !IsSoftContourHipsPointBlocked(points[i])
+                : weights[index] >= 1f - SoftContourMinimumWeight;
+        }
+
+        var chains = new List<(int start, int end, float length)>();
+        for (var i = 0; i < points.Length; i++)
+        {
+            var previous = (i + points.Length - 1) % points.Length;
+            if (!eligible[i] || eligible[previous])
+                continue;
+
+            var end = i;
+            var next = (end + 1) % points.Length;
+            var length = 0f;
+            while (eligible[next])
+            {
+                length += Vector2.Distance(points[end], points[next]);
+                end = next;
+                next = (end + 1) % points.Length;
+            }
+
+            if (end != i)
+                chains.Add((i, end, length));
+            else
+                eligible[i] = false;
+        }
+
+        if (System.Array.TrueForAll(eligible, point => point))
+        {
+            var start = 0;
+            for (var i = 1; i < points.Length; i++)
+            {
+                if (TurnAt(i) > TurnAt(start))
+                    start = i;
+            }
+            chains.Add((start, (start + points.Length - 1) % points.Length, float.PositiveInfinity));
+        }
+
+        chains.Sort((left, right) =>
+        {
+            var byLength = right.length.CompareTo(left.length);
+            return byLength != 0 ? byLength : left.start.CompareTo(right.start);
+        });
+        var segments = new List<(int start, int end)>();
+        var splitSegments = new List<(int start, int end)>();
+        for (var i = 0; i < Mathf.Min(2, chains.Count); i++)
+        {
+            var chain = chains[i];
+            AddSoftContourSegments(points, chain.start, chain.end, SoftContourSplitAngle, splitSegments);
+        }
+
+        var trimmed = new HashSet<int>();
+        var retained = new HashSet<int>();
+        for (var i = 0; i < splitSegments.Count; i++)
+        {
+            var segment = splitSegments[i];
+            var start = segment.start;
+            var end = segment.end;
+            if (i > 0 && splitSegments[i - 1].end == start && TurnAt(start) > SoftContourMaxEndAngle)
+                start = (start + 1) % points.Length;
+            if (start != end && i + 1 < splitSegments.Count && splitSegments[i + 1].start == end &&
+                TurnAt(end) > SoftContourMaxEndAngle)
+                end = (end + points.Length - 1) % points.Length;
+            if (start != end)
+                (start, end) = TrimSoftContourChainEnds(points, start, end, SoftContourMaxEndAngle);
+            for (var point = segment.start; point != start; point = (point + 1) % points.Length)
+                trimmed.Add(point);
+            for (var point = segment.end; point != end; point = (point + points.Length - 1) % points.Length)
+                trimmed.Add(point);
+            if (start == end)
+            {
+                trimmed.Add(start);
+                continue;
+            }
+            for (var point = start; point != end; point = (point + 1) % points.Length)
+                retained.Add(point);
+            retained.Add(end);
+            segments.Add((start, end));
+        }
+
+        float TurnAt(int point)
+        {
+            var previous = (point + points.Length - 1) % points.Length;
+            var next = (point + 1) % points.Length;
+            return Vector2.Angle(points[point] - points[previous], points[next] - points[point]);
+        }
+
+        foreach (var point in trimmed)
+        {
+            if (!retained.Contains(point))
+                eligible[point] = false;
+        }
+
+        if (draw) Handles.color = new Color(1f, 0.2f, 0.2f);
+        foreach (var segment in segments)
+        {
+            for (var point = segment.start; point != segment.end; point = (point + 1) % points.Length)
+                if (draw) Handles.DrawAAPolyLine(2f, toView(points[point]), toView(points[(point + 1) % points.Length]));
+        }
+
+        for (var i = 0; i < points.Length; i++)
+        {
+            if (draw && eligible[i])
+                Handles.DrawSolidDisc(toView(points[i]), Vector3.forward, 4f);
+        }
+
+        if (draw) Handles.color = new Color(0.15f, 0.55f, 1f);
+        var endpoints = new HashSet<int>();
+        foreach (var segment in segments)
+        {
+            endpoints.Add(segment.start);
+            endpoints.Add(segment.end);
+        }
+        foreach (var point in endpoints)
+            if (draw) Handles.DrawSolidDisc(toView(points[point]), Vector3.forward, 5f);
+
+        softContourAutoPointCount = retained.Count;
+        if (draw) Handles.color = new Color(1f, 0.24f, 0.28f);
+        foreach (var point in new SortedSet<int>(retained))
+        {
+            var contour = vertices[boundary[point]];
+            if (!TryGetSoftContourSupport(contour, influenceBoundary, SoftContourDepth, out var support) &&
+                !TryGetAutoSoftContourInteriorSupport(boundary[point], vertices, data.triangles, out support))
+                continue;
+
+            softContourPairs.Add((ConvertPointToBaseDoc(data, contour), ConvertPointToBaseDoc(data, support),
+                endpoints.Contains(point)));
+            if (draw) Handles.DrawSolidDisc(toView(support), Vector3.forward, 4.5f);
+        }
+    }
+
+    private bool TryGetAutoSoftContourInteriorSupport(int index, Vector2[] vertices, int[] triangles, out Vector2 support)
+    {
+        support = Vector2.zero;
+        var largestArea = 0f;
+        for (var i = 0; i + 2 < triangles.Length; i += 3)
+        {
+            var a = triangles[i];
+            var b = triangles[i + 1];
+            var c = triangles[i + 2];
+            if ((index != a && index != b && index != c) ||
+                (uint)a >= vertices.Length || (uint)b >= vertices.Length || (uint)c >= vertices.Length)
+                continue;
+
+            var ab = vertices[b] - vertices[a];
+            var ac = vertices[c] - vertices[a];
+            var area = Mathf.Abs(ab.x * ac.y - ab.y * ac.x);
+            if (area <= largestArea)
+                continue;
+
+            largestArea = area;
+            var center = (vertices[a] + vertices[b] + vertices[c]) / 3f;
+            support = Vector2.Lerp(vertices[index], center, SoftContourDepth);
+        }
+        return largestArea > 0f;
+    }
+
+    internal static void AddSoftContourSegments(IReadOnlyList<Vector2> points, int start, int end,
+        float maxAngle, List<(int start, int end)> segments)
+    {
+        int Next(int index) => (index + 1) % points.Count;
+        if (start == end)
+            return;
+
+        var segmentStart = start;
+        var previous = start;
+        for (var point = Next(start); point != end; point = Next(point))
+        {
+            var angle = Vector2.Angle(points[point] - points[previous], points[Next(point)] - points[point]);
+            if (angle > maxAngle)
+            {
+                segments.Add((segmentStart, point));
+                segmentStart = point;
+            }
+            previous = point;
+        }
+        segments.Add((segmentStart, end));
+    }
+
+    internal static (int start, int end) TrimSoftContourChainEnds(
+        IReadOnlyList<Vector2> points, int start, int end, float maxAngle)
+    {
+        int Next(int index) => (index + 1) % points.Count;
+        int Previous(int index) => (index + points.Count - 1) % points.Count;
+
+        while (Next(start) != end)
+        {
+            var afterStart = Next(start);
+            var beforeEnd = Previous(end);
+            var startAngle = Vector2.Angle(points[afterStart] - points[start],
+                points[Next(afterStart)] - points[afterStart]);
+            var endAngle = Vector2.Angle(points[beforeEnd] - points[Previous(beforeEnd)],
+                points[end] - points[beforeEnd]);
+
+            if (Mathf.Max(startAngle, endAngle) <= maxAngle)
+                break;
+
+            if (startAngle >= endAngle)
+                start = afterStart;
+            else
+                end = beforeEnd;
+        }
+
+        return (start, end);
     }
 
     internal static HashSet<int> FindSoftContourChainEnds(IReadOnlyList<Vector2> points,

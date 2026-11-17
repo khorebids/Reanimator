@@ -228,9 +228,11 @@ public partial class PsdLayerPreviewRenderer
 
         DrawRectOutline(coordinateSpace.CanvasRectView, new Color(1f, 1f, 1f, 0.45f), 1f);
 
+        var softContourActive = options.ActivePreviewModule is ReanimatorSoftContourModule;
+        var softContourBellyActive = softContourActive && SoftContourDrawnBellyMode;
         if (spriteAtlasMode)
         {
-            if (options.SpriteAtlasGeometryMode && !(options.ActivePreviewModule is ReanimatorSoftContourModule))
+            if ((options.SpriteAtlasGeometryMode && !softContourActive) || softContourBellyActive)
                 DrawSpriteAtlasGeometryOverlay(coordinateSpace, drawList, selectedLayerStableKey, visibility.VertexAlpha);
             if (options.ActivePreviewModule is ReanimatorSoftContourModule)
                 DrawSoftContour(coordinateSpace);
@@ -247,9 +249,9 @@ public partial class PsdLayerPreviewRenderer
         var shouldDrawCullGeometryPreview = radiusCullState.ShouldDrawGeometryPreview(selectedLayer != null);
         var activeModuleOverridesGeometryPreview =
             options.ActivePreviewModule != null &&
-            options.ActivePreviewModule.OverridesSelectedGeometryPreview;
+            options.ActivePreviewModule.OverridesSelectedGeometryPreview && !softContourBellyActive;
         var drewRadiusCullPreviewGeometry = false;
-        if (!options.SuppressGeometryOverlay && visibility.VertexAlpha > 0f && vertexDataByLayerSelectionKey.Count > 0)
+        if ((!options.SuppressGeometryOverlay || softContourBellyActive) && visibility.VertexAlpha > 0f && vertexDataByLayerSelectionKey.Count > 0)
         {
             if (tools.LimbBone && DrawLimbBonePreview(coordinateSpace, visibility.VertexAlpha, tools.LimbBoneChild,
                     tools.LimbBoneCull, options.RadiusCull.Radius, options.RadiusCull.RemoveInnerVertices))

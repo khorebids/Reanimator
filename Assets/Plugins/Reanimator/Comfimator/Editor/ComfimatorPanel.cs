@@ -2036,8 +2036,18 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         "Right elbow (2)", "Right wrist (2)"
     };
 
-    private static bool HasAllInTargets(AllInStage stage) =>
-        stage == AllInStage.Limbs;
+    private const string AllInSoftContourKey = "Reanimator.ALLIN.SoftContour";
+    private static readonly string[] AllInSoftContourTargets =
+    {
+        "l_arm / l_arm", "l_arm / l_arm_1", "l_leg / l_leg", "l_leg / l_leg_1",
+        "r_arm / r_arm", "r_arm / r_arm_1", "r_leg / r_leg", "r_leg / r_leg_1", "SC hips"
+    };
+
+    private static string[] GetAllInTargets(AllInStage stage) =>
+        stage == AllInStage.Limbs ? AllInJoints : stage == AllInStage.SoftContour ? AllInSoftContourTargets : null;
+
+    private static string GetAllInTargetsKey(AllInStage stage) =>
+        stage == AllInStage.SoftContour ? AllInSoftContourKey : AllInJointsKey;
 
     private static Rect AllInWeightRegionRect(float x, int index)
     {
@@ -2062,6 +2072,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         Weights,
         Limbs,
         Belly,
+        SoftContour,
         RestPose,
         FaceEyes
     }
@@ -2093,7 +2104,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         }
     }
 
-    public void DrawAllInGraph()
+    public void DrawAllInGraph(IReanimatorExternalPanelHost host)
     {
         allInStages ??= new[]
         {
@@ -2108,6 +2119,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             new GraphStage("Auto Weights", "Recalculate weights on all supported sprite parts.", AllInStage.Weights),
             new GraphStage("Limbs", "Process selected joints on the current rig.", AllInStage.Limbs),
             new GraphStage("Belly", "Apply Bone-mode Limbs to the belly bone.", AllInStage.Belly),
+            new GraphStage("SC", "Apply Auto Soft Contour to enabled sprite and bone pairs.", AllInStage.SoftContour),
             new GraphStage("Commit rest pose", "Commit the current bone pose as rest.", AllInStage.RestPose),
             new GraphStage("Face Eyes", "Apply automated eye geometry and weights.", AllInStage.FaceEyes),
             new GraphStage("Complete", "Report the result of the run."),
@@ -2129,6 +2141,25 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
                         allInGraphPan = new Vector2(24f - i * AllInNodeStep * allInGraphZoom, 24f);
                     }
                 }
+                if (selectedAllInStage >= 0 && allInStages[selectedAllInStage].Stage == AllInStage.Limbs)
+                {
+                    var curve = host.LimbWeightCurve;
+                    using (new EditorGUI.DisabledScope(allInRunning || curve == null))
+                    {
+                        EditorGUI.BeginChangeCheck();
+                        curve = EditorGUILayout.CurveField("Weight Curve", curve);
+                        if (EditorGUI.EndChangeCheck())
+                            host.LimbWeightCurve = curve;
+                        if (GUILayout.Button("Sharp transition", EditorStyles.miniButton))
+                            host.LimbWeightCurve = new AnimationCurve(
+                                new Keyframe(0f, 0f),
+                                new Keyframe(0.425f, 0f),
+                                new Keyframe(0.5f, 0.5f),
+                                new Keyframe(0.575f, 1f),
+                                new Keyframe(1f, 1f));
+                    }
+                }
+
                 if (GUILayout.Button("Reset view", EditorStyles.miniButton))
                 {
                     allInGraphPan = new Vector2(24f, 24f);
@@ -2158,7 +2189,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             var point = (e.mousePosition - canvas.position - allInGraphPan) / allInGraphZoom;
             var index = Mathf.FloorToInt(point.x / AllInNodeStep);
             selectedAllInStage = index >= 0 && index < allInStages.Length &&
-                new Rect(index * AllInNodeStep, 0f, AllInNodeWidth, HasAllInTargets(allInStages[index].Stage) ? AllInWeightsNodeHeight : AllInNodeHeight).Contains(point) ? index : -1;
+                new Rect(index * AllInNodeStep, 0f, AllInNodeWidth, GetAllInTargets(allInStages[index].Stage) != null ? AllInWeightsNodeHeight : AllInNodeHeight).Contains(point) ? index : -1;
             if (e.button == 0 && selectedAllInStage >= 0 &&
                 AllInCheckboxRect(selectedAllInStage * AllInNodeStep).Contains(point))
             {
@@ -2169,11 +2200,10 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
                 return;
             }
             if (e.button == 0 && selectedAllInStage >= 0 &&
-                HasAllInTargets(allInStages[selectedAllInStage].Stage))
+                GetAllInTargets(allInStages[selectedAllInStage].Stage) is { } targets)
             {
                 var targetStage = allInStages[selectedAllInStage].Stage;
-                var key = AllInJointsKey;
-                var targets = AllInJoints;
+                var key = GetAllInTargetsKey(targetStage);
                 for (var i = 0; i < targets.Length; i++)
                 {
                     if (!AllInWeightRegionRect(selectedAllInStage * AllInNodeStep, i).Contains(point))
@@ -2212,7 +2242,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             {
                 var stage = allInStages[i];
                 var x = i * AllInNodeStep;
-                var node = new Rect(x, 0f, AllInNodeWidth, HasAllInTargets(stage.Stage) ? AllInWeightsNodeHeight : AllInNodeHeight);
+                var node = new Rect(x, 0f, AllInNodeWidth, GetAllInTargets(stage.Stage) != null ? AllInWeightsNodeHeight : AllInNodeHeight);
                 GUI.Box(ToCanvas(node), GUIContent.none, EditorStyles.helpBox);
                 EditorGUI.DrawRect(ToCanvas(new Rect(x, 0f, 3f, AllInNodeHeight)),
                     i == selectedAllInStage ? new Color(.33f, .67f, 1f) : new Color(.43f, .43f, .43f));
@@ -2227,17 +2257,16 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
                 if (stage.Stage != AllInStage.Required)
                     EditorStyles.toggle.Draw(ToCanvas(AllInCheckboxRect(x)), GUIContent.none, false, false, enabled, false);
 
-                if (HasAllInTargets(stage.Stage))
+                if (GetAllInTargets(stage.Stage) is { } targets)
                 {
-                    var regions = EditorPrefs.GetInt(AllInJointsKey, -1);
-                    var targets = AllInJoints;
+                    var regions = EditorPrefs.GetInt(GetAllInTargetsKey(stage.Stage), -1);
                     using (new EditorGUI.DisabledScope(!enabled || allInRunning))
                     {
                         var normalColor = GUI.color;
                         for (var region = 0; region < targets.Length; region++)
                         {
                             var selected = (regions & (1 << region)) != 0;
-                            GUI.color = selected && (allInFailedLimbJoints & (1 << region)) != 0
+                            GUI.color = stage.Stage == AllInStage.Limbs && selected && (allInFailedLimbJoints & (1 << region)) != 0
                                 ? normalColor * new Color(1f, 0.42f, 0.42f)
                                 : normalColor;
                             EditorStyles.toggle.Draw(ToCanvas(AllInWeightRegionRect(x, region)), new GUIContent(targets[region]),
@@ -2292,6 +2321,8 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             () => host.ApplyDeterministicAutoWeights(-1, false));
         var limbs = RunAllInLimbs(host);
         var belly = RunAllInNode("Belly", IsAllInStageEnabled(AllInStage.Belly), host.ApplyBellyLimb);
+        var softContour = RunAllInNode("SC", IsAllInStageEnabled(AllInStage.SoftContour),
+            () => host.ApplyAutoSoftContour(EditorPrefs.GetInt(AllInSoftContourKey, -1)));
         RunAllInNode("Commit rest pose", IsAllInStageEnabled(AllInStage.RestPose), () =>
         {
             host.CommitCurrentBonePoseAsRest();
@@ -2299,7 +2330,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         });
         var faceEyes = RunAllInNode("Face Eyes", IsAllInStageEnabled(AllInStage.FaceEyes), () => RunFaceEyes(host));
         return "ALLIN complete: " + geometry + "; Auto Skeleton: " + skeleton + "; " +
-               weights + "; " + limbs + "; " + belly + "; " + faceEyes;
+               weights + "; " + limbs + "; " + belly + "; " + softContour + "; " + faceEyes;
     }
 
     private string RunAllInLimbs(IReanimatorExternalPanelHost host)

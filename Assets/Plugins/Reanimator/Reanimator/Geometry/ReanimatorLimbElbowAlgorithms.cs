@@ -137,6 +137,21 @@ internal static class ReanimatorLimbElbowAlgorithms
         return result;
     }
 
+    public static float EvaluateAccordionParentWeight(
+        float signedDistance, float range, bool positiveSideUsesParent, AnimationCurve curve)
+    {
+        if (Mathf.Abs(signedDistance) <= 1e-5f)
+            return 0.5f;
+
+        var fraction = range > 1e-5f ? Mathf.Clamp01(Mathf.Abs(signedDistance) / range) : 1f;
+        var parentSide = (signedDistance > 0f) == positiveSideUsesParent;
+        if (fraction >= 1f)
+            return parentSide ? 1f : 0f;
+
+        var t = 0.5f + (parentSide ? 0.5f : -0.5f) * fraction;
+        return curve == null || curve.length == 0 ? t : Mathf.Clamp01(curve.Evaluate(t));
+    }
+
     public static void EvaluateLimbSideWeights(
         float signedDistance,
         float maxPositiveDistance,

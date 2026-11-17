@@ -286,7 +286,10 @@ public partial class Reanimator : EditorWindow
         mode = ReanimatorToolModeAlgorithms.NormalizeToolMode(mode);
         if (bottomToolMode == ReanimatorToolMode.SoftContour &&
             mode != ReanimatorToolMode.SoftContour && layerPreviewRenderer != null)
+        {
             layerPreviewRenderer.SelectingSoftContourPoints = false;
+            layerPreviewRenderer.CancelSoftContourBellyStroke();
+        }
         if (bottomToolMode == ReanimatorToolMode.VGen && mode != ReanimatorToolMode.VGen)
             layerPreviewRenderer?.CancelVGenStroke();
         CommitBoneEditRestPoseIfLeaving(mode);

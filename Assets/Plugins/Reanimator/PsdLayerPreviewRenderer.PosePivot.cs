@@ -149,7 +149,7 @@ public partial class PsdLayerPreviewRenderer
         return RestorePoseInternal(registerUndo: false, clearSelection: false, markPending: false);
     }
 
-    private bool RestorePoseInternal(bool registerUndo, bool clearSelection, bool markPending)
+    private bool RestorePoseInternal(bool registerUndo, bool clearSelection, bool markPending, bool rebuildVertices = true)
     {
         if (bones == null || bones.Count == 0)
             return false;
@@ -193,7 +193,7 @@ public partial class PsdLayerPreviewRenderer
         isRotating = false;
         isResizingBone = false;
 
-        if (!string.IsNullOrEmpty(cachedPath))
+        if (rebuildVertices && !string.IsNullOrEmpty(cachedPath))
             BuildVertices(cachedPath);
         if (!LayerExistsBySelectionKey(selectedLayerSelectionKey))
             selectedLayerSelectionKey = string.Empty;

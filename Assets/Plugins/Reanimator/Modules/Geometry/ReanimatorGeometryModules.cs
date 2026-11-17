@@ -83,6 +83,8 @@ internal sealed partial class ReanimatorBoobModule : ReanimatorToolModeModule
 
 internal sealed class ReanimatorSoftContourModule : ReanimatorToolModeModule, IReanimatorPreviewModule
 {
+    private static readonly string[] Modes = { "Simple", "Auto", "Belly" };
+
     public ReanimatorSoftContourModule()
         : base("geometry.soft-contour", "Geometry", 30, 60, "SC", ReanimatorToolMode.SoftContour, 30,
             DrawPanel)
@@ -98,12 +100,8 @@ internal sealed class ReanimatorSoftContourModule : ReanimatorToolModeModule, IR
             return;
         }
 
-        if (api == null) return;
-        if (api.PreviewRenderer == null || !api.PreviewRenderer.HasSoftContourSelection())
-        {
-            api.ShowNotification("SC: select a sprite and a bone.");
-            return;
-        }
+        if (api?.PreviewRenderer is { SoftContourDrawnBellyMode: true } preview)
+            preview.SelectSoftContourBellyBone();
         base.Invoke(api);
     }
 
@@ -112,18 +110,103 @@ internal sealed class ReanimatorSoftContourModule : ReanimatorToolModeModule, IR
     public void HandlePreviewInput(Reanimator.SystemApi api, ReanimatorPreviewContext context)
     {
         if (api?.PreviewRenderer == null || context == null) return;
-        if (api.PreviewRenderer.HandleSoftContourPointInput(context))
+        var preview = api.PreviewRenderer;
+        var handled = preview.SoftContourDrawnBellyMode
+            ? preview.HandleSoftContourBellyInput(context)
+            : !preview.SoftContourAutoMode && preview.HandleSoftContourPointInput(context);
+        if (handled)
             api.Repaint();
     }
 
     public void DrawPreviewOverlay(Reanimator.SystemApi api, ReanimatorPreviewContext context)
     {
-        api?.PreviewRenderer?.DrawSoftContour(context?.Coordinates);
+        if (api?.PreviewRenderer is { } renderer)
+            renderer.DrawSoftContour(context?.Coordinates);
     }
 
     private static void DrawPanel(Reanimator.SystemApi api, float availableHeight)
     {
-        UnityEditor.EditorGUILayout.LabelField("Soft Contour", UnityEditor.EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("Soft Contour", EditorStyles.boldLabel);
+        var preview = api?.PreviewRenderer;
+        if (preview == null)
+            return;
+
+        var currentMode = preview.SoftContourDrawnBellyMode ? 2 : preview.SoftContourAutoMode ? 1 : 0;
+        var mode = GUILayout.Toolbar(currentMode, Modes);
+        if (mode != currentMode)
+        {
+            preview.SoftContourDrawnBellyMode = mode == 2;
+            preview.SoftContourAutoMode = mode == 1;
+            preview.SelectingSoftContourPoints = false;
+            preview.CancelSoftContourBellyStroke();
+            if (mode == 2)
+                preview.SelectSoftContourBellyBone();
+            api.Repaint();
+        }
+
+        if (mode == 2)
+        {
+            if (!preview.HasSoftContourBellyBone)
+                EditorGUILayout.HelpBox("Select the parent bone in the preview.", MessageType.Info);
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button(preview.IsDrawingSoftContourBelly ? "Drawing contour" : "Draw contour"))
+                {
+                    if (preview.IsDrawingSoftContourBelly)
+                        preview.CancelSoftContourBellyStroke();
+                    else
+                        preview.IsDrawingSoftContourBelly = true;
+                    api.Repaint();
+                }
+
+                if (GUILayout.Button("Clear"))
+                {
+                    preview.ClearSoftContourBellyContour();
+                    api.Repaint();
+                }
+            }
+
+            using (new EditorGUI.DisabledScope(!preview.HasSoftContourBellyContour || !preview.HasSoftContourBellyBone))
+            {
+                if (GUILayout.Button("Apply"))
+                {
+                    preview.ApplySoftContourBelly(out var message);
+                    api.ShowNotification(message);
+                    api.Repaint();
+                }
+            }
+
+            return;
+        }
+
+        if (mode == 1)
+        {
+            EditorGUI.BeginChangeCheck();
+            var angle = EditorGUILayout.Slider("Max End Angle", preview.SoftContourMaxEndAngle, 0f, 180f);
+            var splitAngle = EditorGUILayout.Slider("Split Angle", preview.SoftContourSplitAngle, 0f, 180f);
+            var autoDepth = EditorGUILayout.Slider("Depth", preview.SoftContourDepth, 0.01f, 0.99f);
+            var hips = EditorGUILayout.Toggle("SC hips", preview.SoftContourHipsMode);
+            if (EditorGUI.EndChangeCheck())
+            {
+                preview.SoftContourMaxEndAngle = angle;
+                preview.SoftContourSplitAngle = splitAngle;
+                preview.SoftContourDepth = autoDepth;
+                preview.SoftContourHipsMode = hips;
+                api.Repaint();
+            }
+
+            using (new EditorGUI.DisabledScope(!preview.CanApplyAutoSoftContour))
+            {
+                if (GUILayout.Button("Apply"))
+                {
+                    preview.ApplySoftContour(out var message);
+                    api.ShowNotification(message);
+                    api.Repaint();
+                }
+            }
+            return;
+        }
         if (api?.PreviewRenderer == null || !api.PreviewRenderer.HasSoftContourSelection())
             UnityEditor.EditorGUILayout.HelpBox("Select a sprite and a bone.", UnityEditor.MessageType.Info);
         else if (UnityEngine.GUILayout.Button(api.PreviewRenderer.SelectingSoftContourPoints

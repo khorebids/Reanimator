@@ -56,7 +56,7 @@ public partial class Reanimator : EditorWindow
         {
             if (ReanimatorExternalPanelRegistry.TryGet("Comfimator", out var panel) &&
                 panel is IReanimatorAllInGraphPanel graph)
-                graph.DrawAllInGraph();
+                graph.DrawAllInGraph(this);
             else
                 EditorGUILayout.HelpBox("Comfimator is unavailable.", MessageType.Info);
             DrawExternalBlockingProgressOverlay();

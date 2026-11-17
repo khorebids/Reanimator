@@ -180,9 +180,27 @@ public partial class Reanimator
         return result;
     }
 
+    AnimationCurve IReanimatorExternalPanelHost.LimbWeightCurve
+    {
+        get => layerPreviewRenderer?.LimbCurve;
+        set
+        {
+            if (layerPreviewRenderer == null)
+                return;
+            layerPreviewRenderer.LimbCurve = value;
+            SaveLimbsSettingsPreference();
+            Repaint();
+        }
+    }
+
     string[] IReanimatorExternalPanelHost.ApplySelectedAutoLimbJoints(int joints)
     {
         return layerPreviewRenderer.ApplySelectedAutoLimbJoints(joints);
+    }
+
+    string IReanimatorExternalPanelHost.ApplyAutoSoftContour(int targets)
+    {
+        return RunNativeUndoGroup("SC", () => layerPreviewRenderer.ApplyAllInSoftContour(targets));
     }
 
     string IReanimatorExternalPanelHost.ApplyBellyLimb()

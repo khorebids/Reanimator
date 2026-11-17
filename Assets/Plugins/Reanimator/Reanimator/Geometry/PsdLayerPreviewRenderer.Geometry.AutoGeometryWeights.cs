@@ -1332,8 +1332,8 @@ public partial class PsdLayerPreviewRenderer
             selectedLayerSelectionKey = selectionKey;
             selectedBoneIndex = childBoneIndex;
             if (ApplyJointV2(
-                    ReanimatorJointV2Defaults.CreateWeightCurve(),
-                    ReanimatorJointV2Defaults.CreateSpecialWeightCurve(),
+                    LimbCurve,
+                    LimbCurve,
                     ReanimatorJointV2Defaults.SpecialJointDistance,
                     ReanimatorJointV2Defaults.BoneBaseOffset,
                     out var error))

@@ -1456,6 +1456,15 @@ public partial class PsdLayerPreviewRenderer
             return false;
         }
 
+        var firstRestTarget = firstTarget;
+        var secondRestTarget = secondTarget;
+        if (TryFindBoobConstraintLayer((firstTarget + secondTarget) * 0.5f, out var targetLayer) ||
+            TryFindBoobConstraintLayer(firstTarget, out targetLayer))
+        {
+            firstRestTarget = MapNippleGuessToBase(targetLayer, firstTarget);
+            secondRestTarget = MapNippleGuessToBase(targetLayer, secondTarget);
+        }
+
         if (!TryApplyFullBoobsWeights(
                 firstTarget,
                 secondTarget,
@@ -1467,7 +1476,7 @@ public partial class PsdLayerPreviewRenderer
             return false;
         }
 
-        var snappedBones = SnapBoobV2NippleBonesToTargets(firstTarget, secondTarget);
+        var snappedBones = SnapBoobV2NippleBonesToTargets(firstRestTarget, secondRestTarget);
         result = "Boob V2 manual contours applied; " + result;
         if (snappedBones > 0)
             result += "; snapped " + snappedBones + " nipple bone" + (snappedBones == 1 ? string.Empty : "s") + " to targets";
@@ -1575,6 +1584,7 @@ public partial class PsdLayerPreviewRenderer
         createEdgeStartVertexIndex = -1;
         createEdgeLayerStableKey = stableKey ?? string.Empty;
         MarkEditGeometryDataChanged(data, selectionKey, stableKey);
+        RestorePoseAfterBoobApply();
         return true;
     }
 
@@ -1996,8 +2006,18 @@ public partial class PsdLayerPreviewRenderer
         var viewerLeftBoobRenderer = directCost <= swappedCost ? firstBoobBone : secondBoobBone;
         var viewerRightBoobRenderer = directCost <= swappedCost ? secondBoobBone : firstBoobBone;
 
-        return TryRebuildPairedContours(data, leftCenter, rightCenter, leftContour, rightContour,
-            spineRendererBone, viewerLeftBoobRenderer, viewerRightBoobRenderer, false, out result, out error);
+        if (!TryRebuildPairedContours(data, leftCenter, rightCenter, leftContour, rightContour,
+                spineRendererBone, viewerLeftBoobRenderer, viewerRightBoobRenderer, false, out result, out error))
+            return false;
+
+        RestorePoseAfterBoobApply();
+        return true;
+    }
+
+    private void RestorePoseAfterBoobApply()
+    {
+        RestorePreviewTestAnimationPose();
+        RestorePoseInternal(registerUndo: false, clearSelection: false, markPending: false, rebuildVertices: false);
     }
 
     private bool TryRebuildPairedContours(LayerVertexData data, Vector2 leftCenter, Vector2 rightCenter,

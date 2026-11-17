@@ -49,7 +49,7 @@ public interface IReanimatorExternalPanel
 
 public interface IReanimatorAllInGraphPanel
 {
-    void DrawAllInGraph();
+    void DrawAllInGraph(IReanimatorExternalPanelHost host);
 }
 
 public interface IReanimatorExternalCommandPanel
@@ -87,8 +87,10 @@ public interface IReanimatorExternalPanelHost
         bool includeBreastControls,
         bool includeEyeControls);
     string ApplyDeterministicAutoWeights(int regions = -1, bool applyLimbs = true);
+    AnimationCurve LimbWeightCurve { get; set; }
     string[] ApplySelectedAutoLimbJoints(int joints);
     string ApplyBellyLimb();
+    string ApplyAutoSoftContour(int targets);
     string GenerateMissingGeometry();
     string ApplyFaceEyesAutomation();
     string LocateNipples(

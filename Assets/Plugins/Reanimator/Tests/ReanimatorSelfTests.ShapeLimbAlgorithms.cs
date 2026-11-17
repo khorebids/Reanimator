@@ -112,6 +112,17 @@ internal static partial class ReanimatorSelfTests
         AssertFloat(1f, parentWeight, 0.0001f, "Parent midpoint side should be parent-dominant.");
         AssertFloat(0f, childWeight, 0.0001f, "Parent midpoint side should exclude child at the outer edge.");
 
+        var sharpCurve = new AnimationCurve(new Keyframe(0f, 0f), new Keyframe(0.85f, 0f), new Keyframe(1f, 1f));
+        foreach (var distance in new[] { 1f, -1f })
+        {
+            ReanimatorLimbElbowAlgorithms.EvaluateLimbSideWeights(
+                distance, 5f, 5f, positiveSideUsesParent, curve, out var linearParent, out _);
+            ReanimatorLimbElbowAlgorithms.EvaluateLimbSideWeights(
+                distance, 5f, 5f, positiveSideUsesParent, sharpCurve, out var sharpParent, out _);
+            AssertFloat(distance > 0f ? 0.6f : 0.4f, linearParent, 0.0001f, "Linear falloff blends both sides.");
+            AssertFloat(distance > 0f ? 1f : 0f, sharpParent, 0.0001f, "Sharp falloff isolates the dominant bone on both sides.");
+        }
+
         var reversedAxis = -axis;
         var reversedPositiveSideUsesParent = ReanimatorLimbElbowAlgorithms.PositiveSideUsesParent(
             reversedAxis,

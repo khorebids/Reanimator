@@ -211,10 +211,8 @@ public partial class PsdLayerPreviewRenderer
                                   workingData.bindBoneInverseMatrices.Length > 0;
 
         var createdContourVertexIndices = new List<int>(limbPoints != null ? limbPoints.Count : 0);
-        var createdContourSourceIndices = new List<int>(limbPoints != null ? limbPoints.Count : 0);
         var createdCenterVertexIndices = new List<int>(limbPoints != null ? limbPoints.Count : 0);
         var createdShiftedVertexIndices = new List<int>(limbPoints != null ? limbPoints.Count : 0);
-        var createdShiftedSourceIndices = new List<int>(limbPoints != null ? limbPoints.Count : 0);
         if (limbPoints != null)
         {
             for (var i = 0; i < limbPoints.Count; i++)
@@ -230,17 +228,13 @@ public partial class PsdLayerPreviewRenderer
                 if (point.type == LimbGeneratedPointType.Contour)
                 {
                     createdContourVertexIndices.Add(createdVertexIndex);
-                    createdContourSourceIndices.Add(point.contourSourceIndex);
                 }
                 else if (point.type == LimbGeneratedPointType.Center)
                 {
                     createdCenterVertexIndices.Add(createdVertexIndex);
                 }
                 else if (point.type == LimbGeneratedPointType.Shifted)
-                {
                     createdShiftedVertexIndices.Add(createdVertexIndex);
-                    createdShiftedSourceIndices.Add(point.contourSourceIndex);
-                }
             }
         }
 
@@ -293,12 +287,9 @@ public partial class PsdLayerPreviewRenderer
                 workingData,
                 sourceData,
                 line,
-                contourPointsDoc,
                 createdContourVertexIndices,
-                createdContourSourceIndices,
                 createdCenterVertexIndices,
-                createdShiftedVertexIndices,
-                createdShiftedSourceIndices);
+                createdShiftedVertexIndices);
         workingData.hasSkinning = workingData.spriteBoneToRendererBone != null &&
                                   workingData.bindBoneInverseMatrices != null &&
                                   workingData.boneWeights.Length == workingData.vertices.Length &&
@@ -343,10 +334,8 @@ public partial class PsdLayerPreviewRenderer
         }
 
         var createdContourVertexIndices = new List<int>(limbPoints != null ? limbPoints.Count : 0);
-        var createdContourSourceIndices = new List<int>(limbPoints != null ? limbPoints.Count : 0);
         var createdCenterVertexIndices = new List<int>(limbPoints != null ? limbPoints.Count : 0);
         var createdShiftedVertexIndices = new List<int>(limbPoints != null ? limbPoints.Count : 0);
-        var createdShiftedSourceIndices = new List<int>(limbPoints != null ? limbPoints.Count : 0);
         if (limbPoints != null)
         {
             for (var i = 0; i < limbPoints.Count; i++)
@@ -362,17 +351,13 @@ public partial class PsdLayerPreviewRenderer
                 if (point.type == LimbGeneratedPointType.Contour)
                 {
                     createdContourVertexIndices.Add(createdVertexIndex);
-                    createdContourSourceIndices.Add(point.contourSourceIndex);
                 }
                 else if (point.type == LimbGeneratedPointType.Center)
                 {
                     createdCenterVertexIndices.Add(createdVertexIndex);
                 }
                 else if (point.type == LimbGeneratedPointType.Shifted)
-                {
                     createdShiftedVertexIndices.Add(createdVertexIndex);
-                    createdShiftedSourceIndices.Add(point.contourSourceIndex);
-                }
             }
         }
 
@@ -395,12 +380,9 @@ public partial class PsdLayerPreviewRenderer
             targetData,
             sourceData,
             line,
-            contourPointsDoc,
             createdContourVertexIndices,
-            createdContourSourceIndices,
             createdCenterVertexIndices,
-            createdShiftedVertexIndices,
-            createdShiftedSourceIndices);
+            createdShiftedVertexIndices);
         MarkSkinningWeightsChanged(targetData);
         MarkEditGeometryDataChanged(targetData, line.layerSelectionKey, line.layerStableKey);
         return true;
