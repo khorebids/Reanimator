@@ -94,7 +94,7 @@ public partial class Reanimator : EditorWindow
                     GUILayout.EndScrollView();
                 }
 
-                DrawVisibilityTreeHorizontalScrollbar();
+                DrawVisibilityTreeHorizontalScrollbar(spriteRows: true);
             }
             else if (visibilityBone)
             {
@@ -154,11 +154,10 @@ public partial class Reanimator : EditorWindow
             EditorGUI.DrawRect(new Rect(rect.x, rect.yMax - 1f, rect.width, 1f), BoneVisibilityGrid);
         }
 
-        SplitSpriteVisibilityRow(rect, 0, 0f, out var eyeRect, out _, out var nameRect, out var depthRect, out var colorRect);
+        SplitSpriteVisibilityRow(rect, 0, 0f, out var eyeRect, out _, out var nameRect, out var depthRect);
         DrawEyeGlyph(eyeRect, true, false);
         GUI.Label(nameRect, "Sprite", EditorStyles.centeredGreyMiniLabel);
         GUI.Label(depthRect, "Depth", EditorStyles.centeredGreyMiniLabel);
-        GUI.Label(colorRect, "Color", EditorStyles.centeredGreyMiniLabel);
     }
 
     private static void SplitSpriteVisibilityRow(
@@ -168,8 +167,7 @@ public partial class Reanimator : EditorWindow
         out Rect eyeRect,
         out Rect foldoutRect,
         out Rect nameRect,
-        out Rect depthRect,
-        out Rect colorRect)
+        out Rect depthRect)
     {
         var layout = ReanimatorVisibilityLayoutAlgorithms.CalculatePinnedRowRects(
             rect,
@@ -181,7 +179,7 @@ public partial class Reanimator : EditorWindow
             BoneVisibilityToggleWidth,
             0f,
             BoneVisibilityDepthWidth,
-            BoneVisibilityColorWidth,
+            0f,
             BoneVisibilityIndentWidth,
             BoneVisibilityTreeMinWidth,
             BoneVisibilityPinnedGap,
@@ -190,13 +188,12 @@ public partial class Reanimator : EditorWindow
         foldoutRect = layout.FoldoutRect;
         nameRect = layout.NameRect;
         depthRect = layout.DepthRect;
-        colorRect = layout.ColorRect;
     }
 
-    private void DrawVisibilityTreeHorizontalScrollbar()
+    private void DrawVisibilityTreeHorizontalScrollbar(bool spriteRows = false)
     {
         var rect = GUILayoutUtility.GetRect(1f, 14f, GUILayout.ExpandWidth(true));
-        var treeRect = GetVisibilityTreeViewportRect(rect);
+        var treeRect = GetVisibilityTreeViewportRect(rect, spriteRows);
         var viewportWidth = Mathf.Max(1f, treeRect.width);
         var contentWidth = Mathf.Max(viewportWidth, visibilityTreeContentWidth);
         var maxScroll = Mathf.Max(0f, contentWidth - viewportWidth);
@@ -209,7 +206,7 @@ public partial class Reanimator : EditorWindow
         visibilityScroll.x = Mathf.Clamp(visibilityScroll.x, 0f, maxScroll);
     }
 
-    private static Rect GetVisibilityTreeViewportRect(Rect rect)
+    private static Rect GetVisibilityTreeViewportRect(Rect rect, bool spriteRows)
     {
         var layout = ReanimatorVisibilityLayoutAlgorithms.CalculatePinnedRowRects(
             rect,
@@ -221,7 +218,7 @@ public partial class Reanimator : EditorWindow
             BoneVisibilityToggleWidth,
             0f,
             BoneVisibilityDepthWidth,
-            BoneVisibilityColorWidth,
+            spriteRows ? 0f : BoneVisibilityColorWidth,
             BoneVisibilityIndentWidth,
             BoneVisibilityTreeMinWidth,
             BoneVisibilityPinnedGap,
@@ -540,7 +537,7 @@ public partial class Reanimator : EditorWindow
             EditorGUI.DrawRect(rect, highlight);
         }
 
-        SplitSpriteVisibilityRow(rect, level, visibilityScroll.x, out var eyeRect, out var foldoutRect, out var nameRect, out var depthRect, out var colorRect);
+        SplitSpriteVisibilityRow(rect, level, visibilityScroll.x, out var eyeRect, out var foldoutRect, out var nameRect, out var depthRect);
         var visible = node.isGroup ? node.visible : layer != null && layer.visible;
         if (DrawEyeGlyph(eyeRect, visible, true))
         {
@@ -572,11 +569,10 @@ public partial class Reanimator : EditorWindow
 
             GUI.Label(nameRect, layerName, EditorStyles.boldLabel);
             GUI.Label(depthRect, "-", EditorStyles.centeredGreyMiniLabel);
-            GUI.Label(colorRect, GUIContent.none);
             return;
         }
 
-        DrawSpriteLayerCells(layer, layerName, nameRect, depthRect, colorRect, selected);
+        DrawSpriteLayerCells(layer, layerName, nameRect, depthRect, selected);
     }
 
     private void DrawSpriteVisibilityRow(PsdLayerPreviewRenderer.LayerInfo layer, string layerName)
@@ -604,14 +600,14 @@ public partial class Reanimator : EditorWindow
         if (selected && Event.current != null && Event.current.type == EventType.Repaint)
             EditorGUI.DrawRect(rect, new Color(0.45f, 0.16f, 0.62f, 0.36f));
 
-        SplitSpriteVisibilityRow(rect, hierarchical ? level : 0, visibilityScroll.x, out var eyeRect, out _, out var nameRect, out var depthRect, out var colorRect);
+        SplitSpriteVisibilityRow(rect, hierarchical ? level : 0, visibilityScroll.x, out var eyeRect, out _, out var nameRect, out var depthRect);
         if (DrawEyeGlyph(eyeRect, layer.visible, true))
         {
             if (layerPreviewRenderer != null && layerPreviewRenderer.SetLayerVisible(layer, !layer.visible))
                 Repaint();
         }
 
-        DrawSpriteLayerCells(layer, layerName, nameRect, depthRect, colorRect, selected);
+        DrawSpriteLayerCells(layer, layerName, nameRect, depthRect, selected);
     }
 
     private void DrawSpriteLayerCells(
@@ -619,7 +615,6 @@ public partial class Reanimator : EditorWindow
         string layerName,
         Rect nameRect,
         Rect depthRect,
-        Rect colorRect,
         bool selected)
     {
         var nameStyle = selected ? EditorStyles.whiteLabel : EditorStyles.label;
@@ -657,14 +652,6 @@ public partial class Reanimator : EditorWindow
         var depth = DrawDepthFieldWithDrag(depthRect, layer.depth, false, -1, BuildLayerKey(layer), out var depthChanged);
         if (depthChanged)
             layerPreviewRenderer?.SetLayerDepth(layer, depth);
-
-        EditorGUI.BeginChangeCheck();
-        var color = EditorGUI.ColorField(colorRect, GUIContent.none, layer.color);
-        if (EditorGUI.EndChangeCheck())
-        {
-            if (layerPreviewRenderer != null && layerPreviewRenderer.SetLayerColor(layer, color))
-                Repaint();
-        }
     }
 
     private static int GetLayerDebugIconCount(PsdLayerPreviewRenderer.LayerDebugStatus status)

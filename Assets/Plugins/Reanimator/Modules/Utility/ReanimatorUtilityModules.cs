@@ -7,7 +7,7 @@ using UnityEngine;
 internal sealed partial class ReanimatorCircleCleanModule : ReanimatorToolModeModule
 {
     public ReanimatorCircleCleanModule()
-        : base("geometry.circle-clean", "Geometry", 30, 80, "CirCl", ReanimatorToolMode.RadiusCull, 40, (api, height) => api?.DrawRadiusCullSettings(height))
+        : base("geometry.circle-clean", "Geometry", 30, 140, "CirCl", ReanimatorToolMode.RadiusCull, 40, (api, height) => api?.DrawRadiusCullSettings(height))
     {
     }
 }
@@ -19,7 +19,7 @@ internal sealed partial class ReanimatorVertexCullModule : ReanimatorModuleBase,
     public override string Id => "geometry.vertex-cull";
     public override string Section => "Geometry";
     public override int SectionOrder => 30;
-    public override int ButtonOrder => 90;
+    public override int ButtonOrder => 150;
     public override int RowGroup => 40;
     public override string Label(Reanimator.SystemApi api) => "Cull";
     public override bool IsActive(Reanimator.SystemApi api) => api != null && api.ActiveToolMode == ReanimatorToolMode.VertexCull;
@@ -180,7 +180,7 @@ internal sealed class ReanimatorFixSkinWeightsModule : ReanimatorActionModule
 internal sealed class ReanimatorKillSelectedSpriteWeightsModule : ReanimatorActionModule
 {
     public ReanimatorKillSelectedSpriteWeightsModule()
-        : base("utility.kill-selected-sprite-weights", "Utility", 50, 47, "Kill Weights")
+        : base("utility.kill-selected-sprite-weights", "Utility", 50, 47, "Kill Weights", 45)
     {
     }
 
@@ -205,7 +205,7 @@ internal sealed class ReanimatorKillSelectedSpriteWeightsModule : ReanimatorActi
 internal sealed class ReanimatorKillDataModule : ReanimatorActionModule
 {
     public ReanimatorKillDataModule()
-        : base("utility.kill-data", "Utility", 50, 48, "KillData")
+        : base("utility.kill-data", "Utility", 50, 48, "Kill Data", 45)
     {
     }
 

@@ -282,7 +282,7 @@ internal sealed class ReanimatorVGenModule : ReanimatorToolModeModule, IReanimat
 internal sealed class ReanimatorRetriangulateGeometryModule : ReanimatorActionModule
 {
     public ReanimatorRetriangulateGeometryModule()
-        : base("geometry.retriangulate", "Geometry", 30, 85, "ReTri", 40)
+        : base("geometry.retriangulate", "Geometry", 30, 145, "ReTri", 40)
     {
     }
 

@@ -20,8 +20,8 @@ internal sealed partial class ReanimatorVolumeCurveModule : ReanimatorModuleBase
     public override string Section => "Geometry";
     public override int SectionOrder => 30;
     public override int ButtonOrder => 130;
-    public override int RowGroup => 80;
-    public override string Label(Reanimator.SystemApi api) => "Volume";
+    public override int RowGroup => 70;
+    public override string Label(Reanimator.SystemApi api) => "Vol";
     public override bool IsActive(Reanimator.SystemApi api) => api != null && api.ActiveToolMode == ReanimatorToolMode.VolumeCurve;
     public bool AllowBoneInputAfterPreviewInput => false;
     public bool OverridesSelectedGeometryPreview => false;
