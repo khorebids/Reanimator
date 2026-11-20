@@ -324,7 +324,7 @@ public sealed partial class ReaniIK : MonoBehaviour
     public Limb leftArm2 = new Limb();
     public Limb rightArm2 = new Limb();
     [UnityEngine.Serialization.FormerlySerializedAs("breathingAmplitude")]
-    [Range(0f, 3f), Tooltip("Breathing speed relative to the configured period. Zero pauses the cycle.")]
+    [Range(0f, 5f), Tooltip("Breathing speed relative to the configured period. Zero pauses the cycle.")]
     public float breathingFrequency = 1f;
     [Range(0f, 3f), Tooltip("Multiplier for breathing position, scale and rotation changes.")]
     public float breathingMultiplier = 1f;

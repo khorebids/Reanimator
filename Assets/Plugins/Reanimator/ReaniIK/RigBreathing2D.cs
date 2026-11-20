@@ -96,7 +96,7 @@ public sealed class RigBreathing2D
             phase = 0f;
             return;
         }
-        var phaseStep = Mathf.Max(0f, deltaTime) * Mathf.Clamp(frequency, 0f, 3f) / Mathf.Max(0.1f, period);
+        var phaseStep = Mathf.Max(0f, deltaTime) * Mathf.Clamp(frequency, 0f, 5f) / Mathf.Max(0.1f, period);
         phase = Mathf.Repeat(phase + phaseStep, 1f);
         var wave = Mathf.Sin(phase * Mathf.PI * 2f);
         multiplier = Mathf.Clamp(multiplier, 0f, 3f);
@@ -131,9 +131,10 @@ public sealed class RigBreathing2D
             Mathf.Max(0.01f, 1f - inhale * Mathf.Clamp01(mouthCompression.x)),
             Mathf.Max(0.01f, 1f - inhale * Mathf.Clamp01(mouthCompression.y)), 1f),
             mouthRotationDegrees * inhale);
-        var noseScale = 1f + inhale * Mathf.Clamp01(noseExpansion);
-        nosePose.Apply(rig.up * (inhale * Mathf.Max(0f, noseLift)),
-            new Vector3(noseScale, noseScale, 1f), noseRotationDegrees * inhale);
+        float noseInhale=inhale*.5f;
+        var noseScale = 1f + noseInhale * Mathf.Clamp01(noseExpansion);
+        nosePose.Apply(rig.up * (noseInhale * Mathf.Max(0f, noseLift)),
+            new Vector3(noseScale, noseScale, 1f), noseRotationDegrees * noseInhale);
     }
 
     private void ApplyCounterbone(Bone counterbone, Vector3 offset, float scale)

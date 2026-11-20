@@ -119,6 +119,16 @@ public sealed partial class ReaniIKEditor : Editor
         EditorGUI.BeginChangeCheck();
         bool black = EditorGUILayout.ToggleLeft(new GUIContent("Black scene controls (light background)", "Draw IK handles, lines and labels in black. This is an editor display preference."), BlackSceneControls);
         if (EditorGUI.EndChangeCheck()) { BlackSceneControls = black; SceneView.RepaintAll(); }
+        EditorGUI.BeginChangeCheck();
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("breathingFrequency"));
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("breathingMultiplier"));
+        DrawBreathing(serializedObject.FindProperty("breathing"));
+        if(EditorGUI.EndChangeCheck())
+        {
+            RecordSceneControl(target,"Adjust breathing",false);
+            serializedObject.ApplyModifiedPropertiesWithoutUndo();
+            PrefabUtility.RecordPrefabInstancePropertyModifications(target);
+        }
         bodySizeExpanded=EditorGUILayout.Foldout(bodySizeExpanded,"Body Size",true);
         if(bodySizeExpanded)
         using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
@@ -164,9 +174,6 @@ public sealed partial class ReaniIKEditor : Editor
         // AnimationWindow's property-diff recording pipeline.
         serializedObject.Update();
         EditorGUI.BeginChangeCheck();
-        EditorGUILayout.PropertyField(serializedObject.FindProperty("breathingFrequency"));
-        EditorGUILayout.PropertyField(serializedObject.FindProperty("breathingMultiplier"));
-        DrawBreathing(serializedObject.FindProperty("breathing"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("softContour"), true);
         EditorGUILayout.PropertyField(serializedObject.FindProperty("springRotation"), true);
         if(EditorGUI.EndChangeCheck())
