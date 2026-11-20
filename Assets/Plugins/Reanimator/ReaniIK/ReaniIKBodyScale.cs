@@ -83,15 +83,26 @@ public sealed class ReaniIKBodyScale
         Compensate(rig.rightArm2.upper);
         CompensateHeight(rig.transform.up);
         scaledArms.Clear();
-        ScaleArm(rig.leftArm.upper,leftArmSize);ScaleArm(rig.leftArm2.upper,leftArmSize);
-        ScaleArm(rig.rightArm.upper,rightArmSize);ScaleArm(rig.rightArm2.upper,rightArmSize);
+        ScaleArm(rig.leftArm,leftArmSize);ScaleArm(rig.leftArm2,leftArmSize);
+        ScaleArm(rig.rightArm,rightArmSize);ScaleArm(rig.rightArm2,rightArmSize);
     }
 
-    private void ScaleArm(Transform arm,float value)
+    private void ScaleArm(ReaniIK.Limb limb,float value)
     {
-        // A single multiplier at the arm root scales its whole descendant chain.
-        // Apply after body compensation, so both controls compose independently.
-        if(arm&&scaledArms.Add(arm))Scale(arm,Mathf.Clamp(value,MinimumSize,MaximumSize));
+        var upper=limb.upper;var lower=limb.lower;var hand=limb.tip;
+        if(!upper||!scaledArms.Add(upper))return;
+        float delta=Mathf.Clamp(value,MinimumSize,MaximumSize)-1f;
+        float first=1+delta,second=1+delta*1.4f,last=1+delta*1.96f;
+        // Desired cumulative scales grow by 40% per anatomical segment.
+        // Divide out parent scaling so hierarchy inheritance does not compound it twice.
+        Scale(upper,first);
+        bool hasLower=lower&&lower!=upper;
+        if(hasLower)Scale(lower,second/(lower.IsChildOf(upper)?first:1f));
+        if(hand&&hand!=upper&&hand!=lower)
+        {
+            float inherited=hasLower&&hand.IsChildOf(lower)?second:hand.IsChildOf(upper)?first:1f;
+            Scale(hand,last/inherited);
+        }
     }
 
     private void CompensateHeight(Vector3 up)

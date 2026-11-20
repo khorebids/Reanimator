@@ -59,9 +59,18 @@ public static class ReaniIKSurfaceEffectsChecks
             {
                 lastTime.SetValue(effects, EditorApplication.timeSinceStartup - .05);
                 effects.Tick(root.transform); maximum = Mathf.Max(maximum, effects.ActiveDrops);
-                Require(effects.ActiveDrops <= 20, "Sweat exceeded the shared 20-drop pool.");
+                Require(effects.ActiveDrops <= 50, "Sweat exceeded the shared 50-drop pool.");
             }
-            Require(maximum == 20, "Sweat stress test did not fill the pool."); Shot(2);
+            Require(maximum == 50, "Sweat stress test did not fill the pool."); Shot(2);
+            effects.sweat=.2f;
+            for(int i=0;i<120;i++)
+            {
+                lastTime.SetValue(effects,EditorApplication.timeSinceStartup-.05);
+                effects.Tick(root.transform);
+                Require(effects.ActiveDrops<=10,"Sweat exceeded ten concurrent drops.");
+            }
+            Require(effects.TargetSweatDrops==10 && effects.ActiveDrops>0,"Reduced sweat stopped replenishing drops.");
+            Require(Mathf.Approximately(renderer.sharedMaterial.GetFloat("_SurfaceSweat"),1f),"Sweat count slider reduced opacity.");
             effects.sweat = 0; effects.tremor = 1; effects.Tick(root.transform); Shot(3);
             Require(root.transform.Find("Tremor outline"), "Tremor did not create an exterior contour.");
             var bursts = root.transform.Find("Tremor outline");
@@ -76,7 +85,7 @@ public static class ReaniIKSurfaceEffectsChecks
             Require(Mathf.Abs(centers[4].a - centers[0].a) < .02f, "Darkness changed sprite opacity.");
             sheet.Apply(); Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))); File.WriteAllBytes(output, sheet.EncodeToPNG());
             effects.Release(); Require(renderer.sharedMaterial == original, "Disabling effects did not restore the material.");
-            return "PASS: rendered redness from alpha, sprite UV alignment, normals preserve alpha, shared pool reaches but never exceeds 20 drops, exterior tremor mesh, black endpoint preserves opacity, material cleanup. Preview: " + output;
+            return "PASS: rendered redness from alpha, sprite UV alignment, normals preserve alpha, shared pool reaches 50 drops and respects reduced count without reducing opacity, exterior tremor mesh, black endpoint preserves opacity, material cleanup. Preview: " + output;
             void Shot(int column)
             {
                 camera.Render(); camera.Render(); RenderTexture.active = rt; read.ReadPixels(new Rect(0, 0, 256, 256), 0, 0); read.Apply();

@@ -19,6 +19,8 @@ public static class ReaniIKArmSizeChecks
             var leftLower=Bone(left,"l_forearm",Vector3.right*.3f);var leftHand=Bone(leftLower,"l_hand",Vector3.right*.2f);
             var rightLower=Bone(right,"r_forearm",Vector3.right*.3f);var rightHand=Bone(rightLower,"r_hand",Vector3.right*.2f);
             rig.leftArm.upper=rig.leftArm2.upper=left;rig.rightArm.upper=rig.rightArm2.upper=right;
+            rig.leftArm.lower=rig.leftArm2.lower=leftLower;rig.leftArm.tip=rig.leftArm2.tip=leftHand;
+            rig.rightArm.lower=rig.rightArm2.lower=rightLower;rig.rightArm.tip=rig.rightArm2.tip=rightHand;
             rig.bodyScale.distribution=AnimationCurve.Linear(0,1,1,1);
             float leftBase=Vector3.Distance(left.position,leftHand.position),rightBase=Vector3.Distance(right.position,rightHand.position);
             int cases=0;
@@ -31,12 +33,15 @@ public static class ReaniIKArmSizeChecks
                 for(int repeat=0;repeat<20;repeat++)rig.bodyScale.Apply(rig);
                 float inherited=body*body;
                 float factor=inherited*Mathf.Lerp(1,1/inherited,compensation);
-                Check(Mathf.Abs(Vector3.Distance(left.position,leftHand.position)/leftBase-factor*arm)<.0001f,"Left arm / body compensation mismatch.");
-                Check(Mathf.Abs(Vector3.Distance(right.position,rightHand.position)/rightBase-factor*(2-arm))<.0001f,"Right arm independence / compensation mismatch.");
-                foreach(var child in new[]{leftLower,leftHand,rightLower,rightHand})
-                    Check(child.localScale==Vector3.one,"Arm scale compounded at every descendant.");
+                float delta=arm-1;
+                float first=1+delta,second=1+delta*1.4f,last=1+delta*1.96f;
+                Check(Mathf.Abs(Vector3.Distance(left.position,leftHand.position)/leftBase-factor*(.6f*first+.4f*second))<.0001f,"Left arm / body compensation mismatch.");
+                Check(Mathf.Abs(Vector3.Distance(right.position,rightHand.position)/rightBase-factor*(1-delta*1.16f))<.0001f,"Right arm independence / compensation mismatch.");
+                Check(Vector3.Distance(leftLower.localScale,Vector3.one*(second/first))<.00001f,"Forearm did not receive 40% stronger scale change.");
+                Check(Vector3.Distance(leftHand.localScale,Vector3.one*(last/second))<.00001f,"Hand did not receive another 40% stronger scale change.");
                 rig.bodyScale.Restore();
                 Check(left.localScale==Vector3.one&&right.localScale==Vector3.one,"Arm size did not restore authored scale.");
+                foreach(var child in new[]{leftLower,leftHand,rightLower,rightHand})Check(child.localScale==Vector3.one,"Segment scale did not restore.");
                 cases++;
             }
             return $"PASS: {cases} arm/body combinations, compensation 0/0.5/1, independent sides, full descendant chains, duplicate bindings, mirrored nonuniform rotated root and 20 repeats without drift.";

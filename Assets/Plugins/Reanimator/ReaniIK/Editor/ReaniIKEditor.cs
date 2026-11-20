@@ -214,7 +214,16 @@ public sealed partial class ReaniIKEditor : Editor
             EditorGUILayout.PropertyField(effects.FindPropertyRelative("tremorWidth"), new GUIContent("Tremor Peak Width", "Peak base width multiplier. 1 preserves the original width; height is unchanged."));
             EditorGUILayout.PropertyField(effects.FindPropertyRelative("tremorColorDepth"), new GUIContent("Tremor Color Depth (px)", "Sample color this many texture pixels inward from the opaque contour."));
             foreach (string name in new[] { "redness", "rednessColor", "sweat", "sweatSizeMin", "sweatSizeMax", "sweatFadeIn", "sweatSpeed", "sweatSlowdown", "trailMaxLength", "trailLifetime", "darkness", "contrast", "desaturation", "showControls" })
-                EditorGUILayout.PropertyField(effects.FindPropertyRelative(name));
+            {
+                var property=effects.FindPropertyRelative(name);
+                if(name is "sweatSizeMin" or "sweatSizeMax")
+                {
+                    EditorGUI.BeginChangeCheck();
+                    float percent=EditorGUILayout.FloatField(new GUIContent(property.displayName,"Droplet radius as a percentage of sprite height. 1 = 1%."),property.floatValue*100f);
+                    if(EditorGUI.EndChangeCheck())property.floatValue=Mathf.Max(.01f,percent)/100f;
+                }
+                else EditorGUILayout.PropertyField(property);
+            }
         }
     }
 
@@ -391,7 +400,7 @@ public sealed partial class ReaniIKEditor : Editor
         EditorGUI.BeginChangeCheck();
         effects.tremor=DrawFaceSlider(rig,center,size,"Tremor groups "+effects.TargetTremorGroups,effects.tremor,0,true);
         effects.redness=DrawFaceSlider(rig,center-rig.transform.up*size*SceneSliderSpacing,size,"Redness",effects.redness,0,true);
-        effects.sweat=DrawFaceSlider(rig,center-rig.transform.up*size*SceneSliderSpacing*2,size,"Sweat",effects.sweat,0,true);
+        effects.sweat=DrawFaceSlider(rig,center-rig.transform.up*size*SceneSliderSpacing*2,size,"Sweat "+effects.TargetSweatDrops+"/"+ReaniIKSurfaceEffects.MaximumDrops,effects.sweat,0,true);
         effects.darkness=DrawFaceSlider(rig,center-rig.transform.up*size*SceneSliderSpacing*3,size,"Darkness",effects.darkness,0,true);
         effects.contrast=DrawFaceSlider(rig,center-rig.transform.up*size*SceneSliderSpacing*4,size,"Contrast",effects.contrast,-1,true,3,1);
         effects.desaturation=DrawFaceSlider(rig,center-rig.transform.up*size*SceneSliderSpacing*5,size,"Desaturation",effects.desaturation,0,true);

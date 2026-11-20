@@ -13,7 +13,7 @@ public sealed partial class ReaniIKSurfaceEffects
     public ReaniIKSurfaceMaps maps;
     [Range(0, 1)] public float tremor;
     [Range(0, 1)] public float redness;
-    [Range(0, 1)] public float sweat;
+    [Range(0, 1), Tooltip("Simultaneous droplet count: 0 = none, 1 = 50. Does not change droplet opacity.")] public float sweat;
     [Range(0, 1)] public float darkness;
     [Range(-1, 3)] public float contrast = 1f;
     [Range(0, 1)] public float desaturation;
@@ -37,7 +37,8 @@ public sealed partial class ReaniIKSurfaceEffects
     [Min(0.001f), Tooltip("Maximum trail length relative to sprite height.")] public float trailMaxLength = .15f;
     [Min(0), Tooltip("Exponential slowdown per second of droplet age.")] public float sweatSlowdown = .25f;
     public bool showControls = true;
-    public const int MaximumDrops = 20;
+    public const int MaximumDrops = 50;
+    public int TargetSweatDrops=>Mathf.RoundToInt(Mathf.Clamp01(sweat)*MaximumDrops);
     public int ActiveDrops => drops.Count;
     public bool NeedsAnimation => tremor > 0 || sweat > 0;
     private sealed class Surface
@@ -49,7 +50,7 @@ public sealed partial class ReaniIKSurfaceEffects
         public Texture2D trail;
         public Color[] wet;
         public Vector4[] positions = new Vector4[MaximumDrops];
-        public Vector4[] opacity = new Vector4[5];
+        public Vector4[] opacity = new Vector4[(MaximumDrops+3)/4];
         public Vector4 uvX, uvY;
         public float aspect;
         public SpriteSkin skin;
@@ -152,9 +153,9 @@ public sealed partial class ReaniIKSurfaceEffects
                 s.opacity[count / 4][count % 4] = d.opacity; count++;
             }
             for (int i = 0; i < count; i++) material.SetVector("_SweatDrop" + i, s.positions[i]);
-            for (int i = 0; i < 5; i++) material.SetVector("_SweatOpacity" + i, s.opacity[i]);
+            for (int i = 0; i < s.opacity.Length; i++) material.SetVector("_SweatOpacity" + i, s.opacity[i]);
             material.SetFloat("_SweatDropCount", count);
-            material.SetFloat("_SurfaceSweat", s.entry != null && s.entry.effectsEnabled ? Mathf.Clamp01(sweat) : 0);
+            material.SetFloat("_SurfaceSweat", s.entry != null && s.entry.effectsEnabled && TargetSweatDrops>0 ? 1 : 0);
             material.SetFloat("_SurfaceAspect", s.aspect);
         }
         if (tremor > 0)
@@ -167,11 +168,13 @@ public sealed partial class ReaniIKSurfaceEffects
     }
     private void Simulate(float dt)
     {
-        if (sweat <= 0) { drops.Clear(); spawnBudget = 0; }
+        int target=TargetSweatDrops;
+        if(drops.Count>target)drops.RemoveRange(0,drops.Count-target);
+        if (target == 0) { drops.Clear(); spawnBudget = 0; }
         else
         {
-            spawnBudget = Mathf.Min(spawnBudget + dt * sweat * 7, MaximumDrops);
-            while (spawnBudget >= 1 && drops.Count < MaximumDrops)
+            spawnBudget = Mathf.Min(spawnBudget + dt * (MaximumDrops/3f), target);
+            while (spawnBudget >= 1 && drops.Count < target)
             {
                 spawnBudget--;
                 for (int attempt = 0; attempt < 32; attempt++)
@@ -196,7 +199,8 @@ public sealed partial class ReaniIKSurfaceEffects
             var d = drops[i]; var s = d.surface; d.age += dt;
             d.opacity = DropOpacity(d.age, d.fadeTime, sweatFadeIn);
             if (!s.renderer || !s.entry.effectsEnabled || !s.entry.coverage) { drops.RemoveAt(i); continue; }
-            if (d.age >= 12.8f && d.fadeTime < 0) d.fadeTime = 0;
+            // Retire nearly stationary drops so they do not monopolize the pool.
+            if ((d.age >= 12.8f || Mathf.Max(0,sweatSlowdown)*d.age>=1.3862944f) && d.fadeTime < 0) d.fadeTime = 0;
             if (d.fadeTime >= 0)
             {
                 d.fadeTime += dt;

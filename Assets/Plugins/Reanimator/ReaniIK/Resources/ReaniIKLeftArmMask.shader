@@ -21,6 +21,14 @@ Shader "Reanimator/Arm Mask"
         [HideInInspector] _SweatOpacity2 ("Drop opacity 2", Vector) = (1,1,1,1)
         [HideInInspector] _SweatOpacity3 ("Drop opacity 3", Vector) = (1,1,1,1)
         [HideInInspector] _SweatOpacity4 ("Drop opacity 4", Vector) = (1,1,1,1)
+        [HideInInspector] _SweatOpacity5 ("Drop opacity 5", Vector) = (1,1,1,1)
+        [HideInInspector] _SweatOpacity6 ("Drop opacity 6", Vector) = (1,1,1,1)
+        [HideInInspector] _SweatOpacity7 ("Drop opacity 7", Vector) = (1,1,1,1)
+        [HideInInspector] _SweatOpacity8 ("Drop opacity 8", Vector) = (1,1,1,1)
+        [HideInInspector] _SweatOpacity9 ("Drop opacity 9", Vector) = (1,1,1,1)
+        [HideInInspector] _SweatOpacity10 ("Drop opacity 10", Vector) = (1,1,1,1)
+        [HideInInspector] _SweatOpacity11 ("Drop opacity 11", Vector) = (1,1,1,1)
+        [HideInInspector] _SweatOpacity12 ("Drop opacity 12", Vector) = (1,1,1,1)
         [HideInInspector] _SurfaceHasMap ("Has surface mask", Float) = 0
         [HideInInspector] _SweatDrop0 ("Sweat drop 0", Vector) = (0,0,0,0)
         [HideInInspector] _SweatDrop1 ("Sweat drop 1", Vector) = (0,0,0,0)
@@ -42,6 +50,36 @@ Shader "Reanimator/Arm Mask"
         [HideInInspector] _SweatDrop17 ("Sweat drop 17", Vector) = (0,0,0,0)
         [HideInInspector] _SweatDrop18 ("Sweat drop 18", Vector) = (0,0,0,0)
         [HideInInspector] _SweatDrop19 ("Sweat drop 19", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop20 ("Sweat drop 20", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop21 ("Sweat drop 21", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop22 ("Sweat drop 22", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop23 ("Sweat drop 23", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop24 ("Sweat drop 24", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop25 ("Sweat drop 25", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop26 ("Sweat drop 26", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop27 ("Sweat drop 27", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop28 ("Sweat drop 28", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop29 ("Sweat drop 29", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop30 ("Sweat drop 30", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop31 ("Sweat drop 31", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop32 ("Sweat drop 32", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop33 ("Sweat drop 33", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop34 ("Sweat drop 34", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop35 ("Sweat drop 35", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop36 ("Sweat drop 36", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop37 ("Sweat drop 37", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop38 ("Sweat drop 38", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop39 ("Sweat drop 39", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop40 ("Sweat drop 40", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop41 ("Sweat drop 41", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop42 ("Sweat drop 42", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop43 ("Sweat drop 43", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop44 ("Sweat drop 44", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop45 ("Sweat drop 45", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop46 ("Sweat drop 46", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop47 ("Sweat drop 47", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop48 ("Sweat drop 48", Vector) = (0,0,0,0)
+        [HideInInspector] _SweatDrop49 ("Sweat drop 49", Vector) = (0,0,0,0)
         [MaterialToggle] _ZWrite("ZWrite", Float) = 0
         [HideInInspector] _ArmUVX ("UV to rest X", Vector) = (1,0,0,0)
         [HideInInspector] _ArmUVY ("UV to rest Y", Vector) = (0,1,0,0)
@@ -107,6 +145,7 @@ Shader "Reanimator/Arm Mask"
                 float _SurfaceContrast, _SurfaceDesaturation;
                 float4 _SweatDrop0;
                 float4 _SweatOpacity0, _SweatOpacity1, _SweatOpacity2, _SweatOpacity3, _SweatOpacity4;
+                float4 _SweatOpacity5, _SweatOpacity6, _SweatOpacity7, _SweatOpacity8, _SweatOpacity9, _SweatOpacity10, _SweatOpacity11, _SweatOpacity12;
                 float4 _SweatDrop1;
                 float4 _SweatDrop2;
                 float4 _SweatDrop3;
@@ -126,6 +165,36 @@ Shader "Reanimator/Arm Mask"
                 float4 _SweatDrop17;
                 float4 _SweatDrop18;
                 float4 _SweatDrop19;
+                float4 _SweatDrop20;
+                float4 _SweatDrop21;
+                float4 _SweatDrop22;
+                float4 _SweatDrop23;
+                float4 _SweatDrop24;
+                float4 _SweatDrop25;
+                float4 _SweatDrop26;
+                float4 _SweatDrop27;
+                float4 _SweatDrop28;
+                float4 _SweatDrop29;
+                float4 _SweatDrop30;
+                float4 _SweatDrop31;
+                float4 _SweatDrop32;
+                float4 _SweatDrop33;
+                float4 _SweatDrop34;
+                float4 _SweatDrop35;
+                float4 _SweatDrop36;
+                float4 _SweatDrop37;
+                float4 _SweatDrop38;
+                float4 _SweatDrop39;
+                float4 _SweatDrop40;
+                float4 _SweatDrop41;
+                float4 _SweatDrop42;
+                float4 _SweatDrop43;
+                float4 _SweatDrop44;
+                float4 _SweatDrop45;
+                float4 _SweatDrop46;
+                float4 _SweatDrop47;
+                float4 _SweatDrop48;
+                float4 _SweatDrop49;
             CBUFFER_END
             TEXTURE2D(_SurfaceMap); SAMPLER(sampler_SurfaceMap);
             TEXTURE2D(_SweatTrail); SAMPLER(sampler_SweatTrail);
@@ -153,6 +222,36 @@ Shader "Reanimator/Arm Mask"
                 if (index == 17) return _SweatDrop17;
                 if (index == 18) return _SweatDrop18;
                 if (index == 19) return _SweatDrop19;
+                if (index == 20) return _SweatDrop20;
+                if (index == 21) return _SweatDrop21;
+                if (index == 22) return _SweatDrop22;
+                if (index == 23) return _SweatDrop23;
+                if (index == 24) return _SweatDrop24;
+                if (index == 25) return _SweatDrop25;
+                if (index == 26) return _SweatDrop26;
+                if (index == 27) return _SweatDrop27;
+                if (index == 28) return _SweatDrop28;
+                if (index == 29) return _SweatDrop29;
+                if (index == 30) return _SweatDrop30;
+                if (index == 31) return _SweatDrop31;
+                if (index == 32) return _SweatDrop32;
+                if (index == 33) return _SweatDrop33;
+                if (index == 34) return _SweatDrop34;
+                if (index == 35) return _SweatDrop35;
+                if (index == 36) return _SweatDrop36;
+                if (index == 37) return _SweatDrop37;
+                if (index == 38) return _SweatDrop38;
+                if (index == 39) return _SweatDrop39;
+                if (index == 40) return _SweatDrop40;
+                if (index == 41) return _SweatDrop41;
+                if (index == 42) return _SweatDrop42;
+                if (index == 43) return _SweatDrop43;
+                if (index == 44) return _SweatDrop44;
+                if (index == 45) return _SweatDrop45;
+                if (index == 46) return _SweatDrop46;
+                if (index == 47) return _SweatDrop47;
+                if (index == 48) return _SweatDrop48;
+                if (index == 49) return _SweatDrop49;
                 return 0;
             }
 
@@ -207,7 +306,7 @@ Shader "Reanimator/Arm Mask"
                 color.rgb *= lerp(half3(1,1,1), saturate(_SurfaceRedColor.rgb), red);
                 float wet = SAMPLE_TEXTURE2D(_SweatTrail, sampler_SweatTrail, surfaceUV).r;
                 color.rgb = color.rgb * (1 - wet * 0.07 * _SurfaceSweat) + wet * 0.16 * _SurfaceSweat;
-                [loop] for (int i = 0; i < min((int)_SweatDropCount, 20); i++)
+                [loop] for (int i = 0; i < min((int)_SweatDropCount, 50); i++)
                 {
                     float4 drop = SweatDrop(i);
                     float2 delta = (surfaceUV - drop.xy) * float2(_SurfaceAspect, 1);
@@ -219,7 +318,7 @@ Shader "Reanimator/Arm Mask"
                     if (all(dropUV >= 0) && all(dropUV <= 1))
                     {
                         half4 droplet = SAMPLE_TEXTURE2D(_SweatDropTexture, sampler_SweatDropTexture, dropUV);
-                        float4 opacity = i < 4 ? _SweatOpacity0 : i < 8 ? _SweatOpacity1 : i < 12 ? _SweatOpacity2 : i < 16 ? _SweatOpacity3 : _SweatOpacity4;
+                        float4 opacity = i < 4 ? _SweatOpacity0 : i < 8 ? _SweatOpacity1 : i < 12 ? _SweatOpacity2 : i < 16 ? _SweatOpacity3 : i < 20 ? _SweatOpacity4 : i < 24 ? _SweatOpacity5 : i < 28 ? _SweatOpacity6 : i < 32 ? _SweatOpacity7 : i < 36 ? _SweatOpacity8 : i < 40 ? _SweatOpacity9 : i < 44 ? _SweatOpacity10 : i < 48 ? _SweatOpacity11 : _SweatOpacity12;
                         color.rgb = lerp(color.rgb, droplet.rgb, droplet.a * _SurfaceSweat * opacity[i & 3]);
                     }
                 }
