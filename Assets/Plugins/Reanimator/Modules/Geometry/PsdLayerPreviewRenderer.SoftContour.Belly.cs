@@ -12,6 +12,8 @@ public partial class PsdLayerPreviewRenderer
     internal bool SoftContourDrawnBellyMode { get; set; }
     internal bool IsDrawingSoftContourBelly { get; set; }
     internal bool HasSoftContourBellyContour => softContourBellyContour.Count >= 3;
+    internal bool IsSoftContourBellyStrokeActive => softContourBellyControl != 0 && GUIUtility.hotControl == softContourBellyControl;
+    internal Vector2[] CaptureSoftContourBellyDraft() => softContourBellyContour.ToArray();
     internal bool HasSoftContourBellyBone =>
         selectedBoneIndex >= 0 && selectedBoneIndex < bones.Count && bones[selectedBoneIndex] != null;
 
@@ -89,7 +91,7 @@ public partial class PsdLayerPreviewRenderer
         }
     }
 
-    private void DrawSoftContourBelly(PsdCoordinateSpace coordinates)
+    internal void DrawSoftContourBelly(PsdCoordinateSpace coordinates)
     {
         if (coordinates == null)
             return;
@@ -101,6 +103,30 @@ public partial class PsdLayerPreviewRenderer
         DrawBoobV2Contour(coordinates.DocumentToView, softContourBellyStroke, color, false);
         Handles.color = previous;
         Handles.EndGUI();
+    }
+
+    internal string ApplyReanimateBelly(LayerInfo layer, Vector2[] contour)
+    {
+        var previousLayer = selectedLayerSelectionKey;
+        var previousBone = selectedBoneIndex;
+        try
+        {
+            if (!TryFindBoneIndexByName("belly", out selectedBoneIndex))
+                throw new System.InvalidOperationException("Bone 'belly' is required for the belly contour.");
+            SelectLayer(layer);
+            softContourBellyContour.Clear();
+            softContourBellyContour.AddRange(contour);
+            if (!ApplySoftContourBelly(out var message))
+                throw new System.InvalidOperationException(message);
+            return message;
+        }
+        finally
+        {
+            softContourBellyContour.Clear();
+            softContourBellyContour.AddRange(contour);
+            selectedLayerSelectionKey = previousLayer;
+            selectedBoneIndex = previousBone;
+        }
     }
 
     internal bool ApplySoftContourBelly(out string message)

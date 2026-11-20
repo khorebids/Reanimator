@@ -1631,7 +1631,8 @@ internal static class ReanimatorPrefabCooker
         return changed;
     }
 
-    public static CookResult CookNextToPsd(string psdAssetPath)
+    public static CookResult CookNextToPsd(string psdAssetPath, IReadOnlyList<string> requiredSkinnedSprites = null,
+        PsdLayerPreviewRenderer previewRenderer = null)
     {
         var result = new CookResult { PsdAssetPath = NormalizeAssetPath(psdAssetPath) };
         if (string.IsNullOrWhiteSpace(result.PsdAssetPath))
@@ -1706,14 +1707,35 @@ internal static class ReanimatorPrefabCooker
                 ResolveImporterBonePositionScale(sprites[0], characterLayout),
                 characterLayout.DocumentPivotPixels);
             result.Bones = createdBones.Length;
-            result.IkSolvers = ConfigureReaniIK(rigsRoot, createdBones);
+            result.IkSolvers = ConfigureReaniIK(rigsRoot, createdBones, previewRenderer);
+            if (previewRenderer == null) PsdLayerPreviewRenderer.ConfigureSavedSideAssRuntime(result.PsdAssetPath, createdBones);
+            prefabRoot.GetComponent<ReaniIK>().RefreshBoneRigDrivers();
             result.IkManagerAdded = true;
 
             var spriteSkins = prefabRoot.GetComponentsInChildren<SpriteSkin>(true);
             var assignStats = SpriteSkinPrefabBoneAssignerWindow.AssignBonesToCreatedSkeleton(spriteSkins, createdBones);
-            result.SpriteSkins = assignStats.SpriteSkins;
-            result.AssignedBones = assignStats.AssignedBones;
+            result.Sprites += ReanimatorPrefabArmLayers.Configure(prefabRoot.GetComponent<ReaniIK>());
+            ReaniIKSurfaceAuthoring.BindExisting(prefabRoot.GetComponent<ReaniIK>());
+            spriteSkins = prefabRoot.GetComponentsInChildren<SpriteSkin>(true);
+            result.SpriteSkins = spriteSkins.Length;
+            result.AssignedBones = spriteSkins.Sum(skin => skin.boneTransforms.Count(bone => bone));
             result.MissingBones = assignStats.MissingBones;
+            if (requiredSkinnedSprites != null && result.MissingBones > 0)
+            {
+                result.Error = $"Prefab cook could not resolve {result.MissingBones} sprite bone bindings.";
+                return result;
+            }
+            if (requiredSkinnedSprites != null)
+            {
+                foreach (var name in requiredSkinnedSprites)
+                {
+                    if (spriteSkins.Any(skin => string.Equals(skin.name, name, StringComparison.OrdinalIgnoreCase) &&
+                                               skin.boneTransforms.Length > 0 && skin.boneTransforms.All(bone => bone)))
+                        continue;
+                    result.Error = $"Prefab cook has no valid bone bindings for '{name}'.";
+                    return result;
+                }
+            }
 
             var saved = PrefabUtility.SaveAsPrefabAsset(prefabRoot, prefabPath, out var success);
             if (!success || saved == null)
@@ -2007,6 +2029,8 @@ internal static class ReanimatorPrefabCooker
                 bone.localPosition -= (Vector3)(documentPivotPixels * positionScale);
             bone.localRotation = spriteBone.rotation;
             bone.localScale = Vector3.one;
+            // SpriteSkin still reads inactive bone transforms, while Unity hides their Scene gizmos.
+            bone.gameObject.SetActive(false);
         }
 
         return created;
@@ -2048,19 +2072,20 @@ internal static class ReanimatorPrefabCooker
         public Vector2 DocumentPivotPixels;
     }
 
-    internal static int ConfigureReaniIK(Transform rigsRoot, IReadOnlyList<Transform> createdBones)
+    internal static int ConfigureReaniIK(Transform rigsRoot, IReadOnlyList<Transform> createdBones,
+        PsdLayerPreviewRenderer previewRenderer = null)
     {
         var prefabRoot = rigsRoot.root.gameObject;
         var rig = prefabRoot.GetComponent<ReaniIK>();
         if (!rig) rig = prefabRoot.AddComponent<ReaniIK>();
+        rig.showNeckControl = false;
 
         ConfigureVMode("v_gen_left", -90f);
         ConfigureVMode("v_gen_right", 90f);
 
         var spine = FindCreatedBone(createdBones, "spine");
         var count = 0;
-        count += ConfigureLimb(rig.leftLeg, "l_foot", true) ? 1 : 0;
-        count += ConfigureLimb(rig.rightLeg, "r_foot", true) ? 1 : 0;
+        count += ReaniIKLegSetup.Configure(rig, createdBones, rigsRoot);
         count += ConfigureLimb(rig.leftArm, "l_hand", false) ? 1 : 0;
         count += ConfigureLimb(rig.rightArm, "r_hand", false) ? 1 : 0;
         count += ConfigureLimb(rig.leftArm2, "l_hand_2", false) ? 1 : 0;
@@ -2070,6 +2095,7 @@ internal static class ReanimatorPrefabCooker
             FindCreatedBone(createdBones, "nipple_l") ?? FindCreatedBone(createdBones, "l_nipple"),
             FindCreatedBone(createdBones, "nipple_r") ?? FindCreatedBone(createdBones, "r_nipple"));
         rig.softContour.bones = createdBones.Where(ReaniIK.IsSoftContourBone).ToArray();
+        rig.springRotation.bones = createdBones.Where(ReaniIK.IsSpringRotationBone).ToArray();
         rig.frontHair.bones = ExistingBones(FindCreatedBone(createdBones, "front_hair"));
         rig.backHair.bones = ExistingBones(FindCreatedBone(createdBones, "back_hair"));
         rig.breathing.belly = FindCreatedBone(createdBones, "belly");
@@ -2077,7 +2103,11 @@ internal static class ReanimatorPrefabCooker
         rig.breathing.neck.bone = FindCreatedBone(createdBones, "neck");
         rig.breathing.leftArm.bone = rig.leftArm.upper;
         rig.breathing.rightArm.bone = rig.rightArm.upper;
+        rig.breathing.mouth = FindCreatedBone(createdBones, "mouth");
+        rig.breathing.nose = FindCreatedBone(createdBones, "nose");
         rig.breathing.enabled = rig.breathing.belly && spine;
+        rig.facePose.DiscoverBones(prefabRoot.transform);
+        previewRenderer?.ConfigureAutomaticElbowRuntime(createdBones);
         return count;
 
         void ConfigureVMode(string boneName, float angle)

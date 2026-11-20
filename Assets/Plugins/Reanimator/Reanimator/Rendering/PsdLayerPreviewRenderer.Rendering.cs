@@ -47,7 +47,7 @@ public partial class PsdLayerPreviewRenderer
 
             var isSelected = boneIndex == selectedBoneIndex;
             var isHovered = boneIndex == hoveredBoneIndex || boneIndex == panelHoveredBoneIndex;
-            DrawBoneShape(start, end, boneColor, baseAlpha, isSelected, isHovered);
+            DrawBoneShape(start, end, boneColor, baseAlpha, isSelected, isHovered, IsBoneAutomated(boneIndex));
             if (options.AllowBoneLengthEditing && isSelected)
                 DrawBoneLengthHandle(end, baseAlpha, isResizingBone);
         }
@@ -67,7 +67,7 @@ public partial class PsdLayerPreviewRenderer
                boneDisplayModule.TryGetBoneDisplayOverride(options.Api, rendererBoneIndex, out displayOverride);
     }
 
-    private static void DrawBoneShape(Vector2 start, Vector2 end, Color boneColor, float alpha, bool isSelected, bool isHovered)
+    private static void DrawBoneShape(Vector2 start, Vector2 end, Color boneColor, float alpha, bool isSelected, bool isHovered, bool automated = false)
     {
         var thickness = isSelected ? 3f : isHovered ? 2.8f : 2f;
         var outlineThickness = thickness + 0.5f;
@@ -75,6 +75,11 @@ public partial class PsdLayerPreviewRenderer
             ? new Color(1f, 0.9f, 0.2f, Mathf.Clamp01(alpha))
             : new Color(0f, 0f, 0f, Mathf.Clamp01(alpha * 0.95f));
 
+        if (automated)
+        {
+            Handles.color = new Color(0f, 1f, .82f, Mathf.Clamp01(alpha));
+            BoneShapeDrawer.Draw(start, end, thickness + 3f);
+        }
         Handles.color = outlineColor;
         BoneShapeDrawer.Draw(start, end, outlineThickness);
 
@@ -810,6 +815,11 @@ public partial class PsdLayerPreviewRenderer
 
         if (!TryGetLayerMeshDataForDraw(layer, out var data))
             return false;
+        if(SideAssTestVisible && BuildSelectionKey(layer)==sideAssTestRecipe.layer)
+        {
+            UpdateSideAssTestPose();
+            data=sideAssTestData;
+        }
         var texture = data.texture != null ? data.texture : GetPreviewAtlasTexture();
         if (texture == null)
             return false;
@@ -1186,10 +1196,11 @@ public partial class PsdLayerPreviewRenderer
 
     private Vector2[] GetLayerVerticesForDraw(LayerVertexData data)
     {
+        if(SideAssTestVisible && ReferenceEquals(data,sideAssTestData))return sideAssTestVertices;
         if (data == null || data.vertices == null)
             return null;
-        bonePoseAtRest = IsCurrentBonePoseRest();
-        if (bonePoseAtRest || !deformSpritesWithBonePoseForCurrentDraw)
+        bonePoseAtRest = !PreviewBoneRigActive && IsCurrentBonePoseRest();
+        if (bonePoseAtRest || (!deformSpritesWithBonePoseForCurrentDraw && !PreviewBoneRigActive))
             return data.vertices;
 
         if (!data.hasSkinning || data.boneWeights == null || data.spriteBoneToRendererBone == null || data.bindBoneInverseMatrices == null)

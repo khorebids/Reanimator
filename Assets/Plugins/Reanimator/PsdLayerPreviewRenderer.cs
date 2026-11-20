@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -13,7 +13,7 @@ using UnityEngine.U2D;
 using UnityEngine.Rendering;
 
 [Serializable]
-public partial class PsdLayerPreviewRenderer
+public partial class PsdLayerPreviewRenderer : ISerializationCallbackReceiver
 {
     private const int CurrentPreviewPipelineVersion = 31;
     private const double AssetDependencyHashCheckIntervalSeconds = 0.75;
@@ -428,11 +428,11 @@ public partial class PsdLayerPreviewRenderer
 
     [NonSerialized] private Texture2D cachedTexture;
     [NonSerialized] private Texture2D cachedAtlasTexture;
-    [NonSerialized] private readonly List<LayerInfo> sortedLayers = new List<LayerInfo>();
+    [NonSerialized] private List<LayerInfo> sortedLayers = new List<LayerInfo>();
     [SerializeField] private List<BoneInfo> bones = new List<BoneInfo>();
-    [NonSerialized] private readonly List<int> boneDrawOrder = new List<int>();
-    [NonSerialized] private readonly Dictionary<string, LayerVertexData> vertexDataByLayerSelectionKey = new Dictionary<string, LayerVertexData>(StringComparer.OrdinalIgnoreCase);
-    [NonSerialized] private readonly Dictionary<string, DefaultGeometrySnapshot> defaultGeometryBySpriteKey = new Dictionary<string, DefaultGeometrySnapshot>(StringComparer.OrdinalIgnoreCase);
+    [NonSerialized] private List<int> boneDrawOrder = new List<int>();
+    [NonSerialized] private Dictionary<string, LayerVertexData> vertexDataByLayerSelectionKey = new Dictionary<string, LayerVertexData>(StringComparer.OrdinalIgnoreCase);
+    [NonSerialized] private Dictionary<string, DefaultGeometrySnapshot> defaultGeometryBySpriteKey = new Dictionary<string, DefaultGeometrySnapshot>(StringComparer.OrdinalIgnoreCase);
     [NonSerialized] private string defaultGeometryAssetPath = string.Empty;
     [NonSerialized] private Material layerMeshMaterial;
     [NonSerialized] private Material influenceOverlayMaterial;
@@ -441,19 +441,19 @@ public partial class PsdLayerPreviewRenderer
     [NonSerialized] private Vector3[] vertexBoundarySegments = Array.Empty<Vector3>();
     [NonSerialized] private Vector3[] vertexPointSegments = Array.Empty<Vector3>();
     [NonSerialized] private Vector3[] vertexBoundarySegmentsShifted = Array.Empty<Vector3>();
-    [NonSerialized] private readonly List<LayerInfo> spriteHitBuffer = new List<LayerInfo>();
+    [NonSerialized] private List<LayerInfo> spriteHitBuffer = new List<LayerInfo>();
     [NonSerialized] private bool spriteSelectionAllowedForCurrentDraw = true;
     [NonSerialized] private bool spriteSelectionLockedForCurrentDraw;
     [NonSerialized] private bool isolateSelectedSpriteForCurrentDraw;
     [NonSerialized] private bool isolateBoneModificationForCurrentDraw;
-    [NonSerialized] private readonly List<int> elbowConnectionBuffer = new List<int>(8);
+    [NonSerialized] private List<int> elbowConnectionBuffer = new List<int>(8);
     [NonSerialized] private string boneRecoveryAttemptedPath;
     [NonSerialized] private bool boobIsDragging;
     [NonSerialized] private int boobControlId;
     [NonSerialized] private int boobV2ActiveTarget = -1;
     [NonSerialized] private int boobV2DrawingContour = -1;
     [NonSerialized] private Vector2 boobV2LastStrokeView;
-    [NonSerialized] private readonly List<Vector2> boobV2WorkingContourDoc = new List<Vector2>();
+    [NonSerialized] private List<Vector2> boobV2WorkingContourDoc = new List<Vector2>();
     [NonSerialized] private bool radiusCullIsDragging;
     [NonSerialized] private bool radiusCullHandleIsDragging;
     [NonSerialized] private int radiusCullControlId;
@@ -483,9 +483,9 @@ public partial class PsdLayerPreviewRenderer
     [NonSerialized] private float debugModeScoreWorld;
     [NonSerialized] private string debugChosenBoneMode = string.Empty;
     [NonSerialized] private double nextAssetDependencyHashCheckTime;
-    [NonSerialized] private readonly Dictionary<string, Rect> debugLayerVertexBoundsDocByLayerKey = new Dictionary<string, Rect>(StringComparer.OrdinalIgnoreCase);
-    [NonSerialized] private readonly Dictionary<string, float> debugLayerVertexScoreByLayerKey = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
-    [NonSerialized] private readonly Dictionary<string, LayerGeometryDebugInfo> debugLayerGeometryByLayerKey = new Dictionary<string, LayerGeometryDebugInfo>(StringComparer.OrdinalIgnoreCase);
+    [NonSerialized] private Dictionary<string, Rect> debugLayerVertexBoundsDocByLayerKey = new Dictionary<string, Rect>(StringComparer.OrdinalIgnoreCase);
+    [NonSerialized] private Dictionary<string, float> debugLayerVertexScoreByLayerKey = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+    [NonSerialized] private Dictionary<string, LayerGeometryDebugInfo> debugLayerGeometryByLayerKey = new Dictionary<string, LayerGeometryDebugInfo>(StringComparer.OrdinalIgnoreCase);
 
     private enum LimbGeneratedPointType : byte
     {
@@ -643,11 +643,11 @@ public partial class PsdLayerPreviewRenderer
                 boobToolVersion = 1;
                 boobToolVersionInitialized = true;
             }
-            return Mathf.Clamp(boobToolVersion, 0, 1);
+            return Mathf.Clamp(boobToolVersion, 0, 2);
         }
         set
         {
-            var next = Mathf.Clamp(value, 0, 1);
+            var next = Mathf.Clamp(value, 0, 2);
             boobToolVersionInitialized = true;
             if (boobToolVersion == next)
                 return;
@@ -751,6 +751,7 @@ public partial class PsdLayerPreviewRenderer
 
     public void MarkDirty()
     {
+        EnsureRuntimeState();
         CancelPreviewCacheRefresh();
         // Keep cachedPath so a reselect of the same PSD does not look like a path switch.
         // Rebuild will still happen because cachedTexture is cleared.

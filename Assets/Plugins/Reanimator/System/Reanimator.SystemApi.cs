@@ -85,6 +85,8 @@ public partial class Reanimator : EditorWindow
             owner?.FixSelectedSpriteSkinWeights();
         }
 
+        public void ShowFixGeometryMenu() => owner?.ShowFixGeometryMenu();
+
         public bool HasSelectedSprite()
         {
             return owner != null &&

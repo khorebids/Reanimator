@@ -7,6 +7,78 @@ using UnityEngine;
 
 public partial class PsdLayerPreviewRenderer
 {
+    private static float ResolveAutoSkeletonNippleLength(float shoulderSpan) =>
+        Mathf.Max(5f, shoulderSpan * 0.08f);
+
+    [SerializeField] internal bool SkeletronBellyParentRoot;
+
+    internal bool TryApplySkeletron(IReadOnlyList<(string name, int parent, Vector2 start, Vector2 end)> segments,
+        out string error, bool includeHeadControls = false)
+    {
+        error = null;
+        if (segments.Count == 0)
+        {
+            error = "Place at least one bone that touches the PSD canvas.";
+            return false;
+        }
+        var specs = new List<AutoSkeletonBoneSpec>(segments.Count);
+        foreach (var segment in segments)
+        {
+            if ((segment.end - segment.start).sqrMagnitude < 1f)
+            {
+                error = $"Separate the two joints of '{segment.name}' before applying.";
+                return false;
+            }
+            specs.Add(new AutoSkeletonBoneSpec
+            {
+                name = segment.name,
+                parentIndex = segment.parent,
+                start = segment.start,
+                end = segment.end
+            });
+        }
+        if (SkeletronBellyParentRoot)
+        {
+            var rootIndex = specs.FindIndex(spec => NormalizeAutoWeightName(spec.name) == "root");
+            var bellyIndex = specs.FindIndex(spec => NormalizeAutoWeightName(spec.name) == "belly");
+            if (rootIndex >= 0 && bellyIndex >= 0)
+                specs[bellyIndex].parentIndex = rootIndex;
+        }
+        var spineIndex = specs.FindIndex(spec => NormalizeAutoWeightName(spec.name) == "spine");
+        if (spineIndex >= 0 && specs.Exists(spec => NormalizeAutoWeightName(spec.name) is "larm" or "rarm"))
+        {
+            var spine = specs[spineIndex];
+            var shoulders = specs.FindIndex(spec => NormalizeAutoWeightName(spec.name) == "shoulders");
+            if (shoulders < 0)
+            {
+                shoulders = spineIndex + 1;
+                foreach (var spec in specs)
+                    if (spec.parentIndex >= shoulders)
+                        spec.parentIndex++;
+                specs.Insert(shoulders, new AutoSkeletonBoneSpec { name = "shoulders" });
+            }
+            specs[shoulders].parentIndex = spineIndex;
+            specs[shoulders].start = spine.end;
+            specs[shoulders].end = Vector2.Lerp(spine.end, spine.start, 1f / 3f);
+            foreach (var spec in specs)
+                if (NormalizeAutoWeightName(spec.name) is "larm" or "rarm")
+                    spec.parentIndex = shoulders;
+        }
+        if (includeHeadControls)
+        {
+            var builder = new AutoSkeletonBuilder(this, new AutoSkeletonPoseFrame(), new AutoSkeletonPerson(),
+                AutoSkeletonNaming.FromReferenceAsset(null), DocumentSize, false, false, true);
+            specs = builder.AddHeadControls(specs);
+        }
+        ApplyAutoSkeletonBoneSpecs(specs, "Apply Skeletron", 0);
+        var body = layerInfos.Find(item => item != null && item.visible &&
+            NormalizeAutoWeightName(item.name) is "body" or "torso");
+        if (TryFindBoneIndexByName("shoulders", out _) && body != null &&
+            TryGetLayerVertexData(body, out var bodyData) && bodyData?.triangles?.Length >= 3)
+            ApplyBodyAutoWeights();
+        return true;
+    }
+
     public string ApplyAutoSkeletonPoseJson(
         string poseJson,
         string namingReferenceAssetPath,
@@ -507,6 +579,25 @@ public partial class PsdLayerPreviewRenderer
             return bones;
         }
 
+        public List<AutoSkeletonBoneSpec> AddHeadControls(IReadOnlyList<AutoSkeletonBoneSpec> source)
+        {
+            foreach (var bone in source)
+            {
+                indicesByName.Add(bone.name, bones.Count);
+                usedNames.Add(bone.name);
+                bones.Add(bone);
+            }
+            if (!indicesByName.TryGetValue("head", out var headIndex))
+                return bones;
+            var head = bones[headIndex];
+            var neckStart = indicesByName.TryGetValue("neck", out var neckIndex) ? bones[neckIndex].start : head.start;
+            AddEyesControlBone("head", neckStart, head.start, head.end);
+            AddMouthControlBone("head", neckStart, head.start, head.end);
+            AddFrontHairControlBone("head", head.start, head.end);
+            AddBackHairControlBone("head", head.start, head.end);
+            return bones;
+        }
+
         private static bool IsOpenPoseLeftSideViewerLeft(
             Vector2 leftShoulder,
             Vector2 rightShoulder,
@@ -539,7 +630,7 @@ public partial class PsdLayerPreviewRenderer
                 return;
 
             var shoulderSpan = Mathf.Max(1f, Vector2.Distance(leftShoulder, rightShoulder));
-            var nippleLength = Mathf.Max(5f, shoulderSpan * 0.08f);
+            var nippleLength = ResolveAutoSkeletonNippleLength(shoulderSpan);
             var downOffset = -torsoDir * Mathf.Max(3f, torsoLength * 0.035f);
             var leftStart = Vector2.Lerp(chest, leftShoulder, 0.34f) + downOffset;
             var rightStart = Vector2.Lerp(chest, rightShoulder, 0.34f) + downOffset;

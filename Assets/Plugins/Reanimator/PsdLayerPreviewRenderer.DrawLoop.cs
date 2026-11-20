@@ -56,6 +56,7 @@ public partial class PsdLayerPreviewRenderer
             return false;
 
         UpdatePreviewTestAnimation(options.PreviewTestAnimationActive);
+        using var previewBoneRigScope = BeginPreviewBoneRigs();
 
         var docSize = cachedDocumentSize;
         if (docSize.x <= 0 || docSize.y <= 0)
@@ -72,6 +73,7 @@ public partial class PsdLayerPreviewRenderer
         var drewSomething = false;
         var drawList = sortedLayers.Count > 0 ? sortedLayers : layerInfos;
         var tools = options.Tools;
+        sideAssTestDrawing=tools.Boob && BoobToolVersion==2;
         var visibility = options.Visibility;
         var radiusCullState = PsdPreviewRadiusCullState.Create(options, radiusCullHasRadiusOverride, radiusCullRadiusOverride);
 
@@ -91,6 +93,8 @@ public partial class PsdLayerPreviewRenderer
         }
         else if (tools.Elbow)
             HandleElbowInput(localRect, coordinateSpace, drawList);
+        else if (tools.LimbCrossSection && ShoulderDrawing)
+            HandleShoulderOutline(localRect, coordinateSpace);
         else if (tools.Limb)
         {
             if (radiusCullState.LimbHandleInputActive)
@@ -197,6 +201,8 @@ public partial class PsdLayerPreviewRenderer
         var selectedLayerStableKey = selectedLayer != null ? BuildKey(selectedLayer.name, selectedLayer.layerId) : string.Empty;
         foreach (var layer in drawList)
         {
+            if (options.TemporarilyHiddenLayers?.Contains(layer) == true)
+                continue;
             if (selectedLayer == null && !string.IsNullOrEmpty(selectedKey))
             {
                 var key = BuildSelectionKey(layer);
@@ -249,7 +255,7 @@ public partial class PsdLayerPreviewRenderer
         var shouldDrawCullGeometryPreview = radiusCullState.ShouldDrawGeometryPreview(selectedLayer != null);
         var activeModuleOverridesGeometryPreview =
             options.ActivePreviewModule != null &&
-            options.ActivePreviewModule.OverridesSelectedGeometryPreview && !softContourBellyActive;
+            options.ActivePreviewModule.OverridesSelectedGeometryPreview && !softContourBellyActive || SideAssTestVisible;
         var drewRadiusCullPreviewGeometry = false;
         if ((!options.SuppressGeometryOverlay || softContourBellyActive) && visibility.VertexAlpha > 0f && vertexDataByLayerSelectionKey.Count > 0)
         {
@@ -323,7 +329,7 @@ public partial class PsdLayerPreviewRenderer
             DrawRadiusCullOverlay(coordinateSpace, selectedLayer, visibility.VertexAlpha, radiusCullState.PreviewRadius, new Color(1f, 0.2f, 0.2f, 1f));
         }
 
-        if (options.DrawBones && bones.Count > 0)
+        if (options.DrawBones && bones.Count > 0 && !SideAssTestVisible)
         {
             DrawBones(coordinateSpace, visibility.BoneAlpha, options);
             drewSomething = true;
@@ -346,6 +352,10 @@ public partial class PsdLayerPreviewRenderer
         LayerInfo selectedLayer,
         PsdPreviewDrawOptions options)
     {
+        if (options != null && options.Tools.ElbowCorrective)
+            DrawCorrectiveElbow(coordinateSpace, selectedLayer);
+        if (options != null && options.Tools.LimbCrossSection)
+            DrawShoulderHelperPreview(coordinateSpace);
         if (options != null && options.AutoGeometryQuadNetPreviewActive)
             DrawAutoGeometryQuadNetPreviewSquare(
                 localRect,
@@ -384,6 +394,72 @@ public partial class PsdLayerPreviewRenderer
             DrawJointV2BoneAngleOverlay(localRect);
         }
     }
+
+    internal bool DrawReanimateCanvas(string assetPath, Rect viewport, PreviewNavigator navigator, LayerInfo focus,
+        bool pauseCamera, bool hideOccluders, out PsdCoordinateSpace coordinates, ISet<LayerInfo> hiddenLayers = null,
+        LayerInfo occlusionTarget = null, bool onlyFocus = false)
+    {
+        coordinates = null;
+        var repaint = Event.current.type == EventType.Repaint;
+        if (repaint && HasAssetDependencyChanged(assetPath))
+        {
+            InvalidatePreviewCacheForExternalAssetChange();
+            return false;
+        }
+
+        var documentSize = cachedDocumentSize;
+        if (documentSize.x <= 0 || documentSize.y <= 0)
+            documentSize = new Vector2Int(cachedTexture.width, cachedTexture.height);
+        var moving = false;
+        if (repaint)
+        {
+            var baseCoordinates = new PsdCoordinateSpace(viewport, documentSize, layerInfos, null);
+            var bounds = focus == null ? baseCoordinates.CanvasRectView : baseCoordinates.LayerToViewRect(focus);
+            if (bounds.width > 0f && bounds.height > 0f)
+                moving = navigator.AnimateFrameBounds(viewport, bounds, focus == null ? 0.98f : 0.86f,
+                    EditorApplication.timeSinceStartup, pauseCamera);
+        }
+
+        coordinates = new PsdCoordinateSpace(viewport, documentSize, layerInfos, navigator);
+        if (!repaint)
+            return false;
+        var atlas = GetPreviewAtlasTexture();
+        var drawList = sortedLayers.Count > 0 ? sortedLayers : layerInfos;
+        var occluded = occlusionTarget ?? (hideOccluders ? focus : null);
+        var focusRect = occluded != null ? coordinates.LayerToViewRect(occluded) : default;
+        var aboveFocus = false;
+        foreach (var layer in drawList)
+        {
+            if (layer == null || !layer.visible || hiddenLayers?.Contains(layer) == true ||
+                (onlyFocus && !ReferenceEquals(layer, focus)))
+                continue;
+            var texture = layer.texture != null ? layer.texture : atlas;
+            var rect = coordinates.LayerToViewRect(layer);
+            if (aboveFocus && focusRect.Overlaps(rect))
+                continue;
+            if (ReferenceEquals(layer, occluded))
+                aboveFocus = true;
+            if (texture == null || !IsPreviewRectVisible(rect, viewport))
+                continue;
+            var uv = PsdCoordinateSpace.LayerTextureUvRect(layer, new Vector2(texture.width, texture.height), false);
+            GUI.DrawTextureWithTexCoords(rect, texture, uv, true);
+        }
+        DrawRectOutline(coordinates.CanvasRectView, new Color(1f, 1f, 1f, 0.45f), 1f);
+        return moving;
+    }
+
+    internal bool IsReanimateChestStrokeActive =>
+        boobIsDragging && boobControlId != 0 && GUIUtility.hotControl == boobControlId;
+
+    internal bool HandleReanimateChestInput(Rect viewport, PsdCoordinateSpace coordinates, LayerInfo body)
+    {
+        var input = Event.current;
+        HandleBoobV2Input(viewport, coordinates, layerInfos, body);
+        return input.type == EventType.Used;
+    }
+
+    internal void DrawReanimateChestContours(PsdCoordinateSpace coordinates) =>
+        DrawBoobV2Preview(coordinates.DocumentToView, 1f);
 
     private bool DrawLayerVisual(
         LayerInfo layer,

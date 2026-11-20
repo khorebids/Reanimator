@@ -649,9 +649,9 @@ public partial class Reanimator : EditorWindow
                 Repaint();
         }
 
-        var depth = DrawDepthFieldWithDrag(depthRect, layer.depth, false, -1, BuildLayerKey(layer), out var depthChanged);
-        if (depthChanged)
-            layerPreviewRenderer?.SetLayerDepth(layer, depth);
+        var renderer = layerPreviewRenderer;
+        DrawDepthFieldWithDrag(depthRect, layer.depth, false, -1, BuildLayerKey(layer),
+            depth => renderer?.SetLayerDepth(layer, depth));
     }
 
     private static int GetLayerDebugIconCount(PsdLayerPreviewRenderer.LayerDebugStatus status)

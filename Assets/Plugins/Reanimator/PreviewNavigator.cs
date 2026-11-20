@@ -17,12 +17,67 @@ public class PreviewNavigator
     private bool isPanning;
     private int panControlId;
     [NonSerialized] private double autoCenterLastTime = -1d;
+    [NonSerialized] private bool hasFrame;
+    [NonSerialized] private bool framePaused;
+    [NonSerialized] private double frameStartTime;
+    [NonSerialized] private double frameLastTime;
+    [NonSerialized] private float frameStartZoom, frameTargetZoom;
+    [NonSerialized] private Vector2 frameStartOffset, frameTargetOffset;
 
     public void Reset()
     {
         pan = Vector2.zero;
         zoom = 1f;
+        hasFrame = false;
+        framePaused = false;
         EnsureZoomLimits();
+    }
+
+    internal bool AnimateFrameBounds(Rect viewport, Rect bounds, float fill, double now, bool paused = false)
+    {
+        const float duration = 0.48f;
+        if (hasFrame && (framePaused || paused))
+            frameStartTime += now - frameLastTime;
+        framePaused = paused;
+        frameLastTime = now;
+        if (paused)
+            return false;
+
+        var previousZoom = zoom;
+        zoom = fill * Mathf.Min(viewport.width / bounds.width, viewport.height / bounds.height);
+        EnsureZoomLimits();
+        var targetZoom = zoom;
+        var targetOffset = viewport.center - bounds.center;
+        if (!hasFrame)
+        {
+            hasFrame = true;
+            frameTargetZoom = targetZoom;
+            frameTargetOffset = targetOffset;
+            frameStartTime = now - duration;
+            pan = targetOffset * zoom;
+            return false;
+        }
+
+        if (!Mathf.Approximately(targetZoom, frameTargetZoom) || targetOffset != frameTargetOffset)
+        {
+            frameStartZoom = previousZoom;
+            frameStartOffset = pan / previousZoom;
+            frameTargetZoom = targetZoom;
+            frameTargetOffset = targetOffset;
+            frameStartTime = now;
+        }
+
+        var t = Mathf.Clamp01((float)(now - frameStartTime) / duration);
+        if (t >= 1f)
+        {
+            pan = frameTargetOffset * zoom;
+            return false;
+        }
+
+        var ease = t * t * t * (t * (t * 6f - 15f) + 10f);
+        zoom = frameStartZoom * Mathf.Pow(frameTargetZoom / frameStartZoom, ease);
+        pan = Vector2.Lerp(frameStartOffset, frameTargetOffset, ease) * zoom;
+        return true;
     }
 
     public bool HandleInput(

@@ -22,6 +22,7 @@ public partial class PsdLayerPreviewRenderer
 
     public void RequestPreviewCacheRefresh(string assetPath, bool preserveUiVisibility = true)
     {
+        EnsureRuntimeState();
         if (string.IsNullOrWhiteSpace(assetPath))
             return;
 

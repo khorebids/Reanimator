@@ -151,7 +151,8 @@ public partial class PsdLayerPreviewRenderer
         return false;
     }
 
-    private bool InsertAppliedVertexIntoLayerData(LayerVertexData data, Vector2 pointDoc, bool pointAlreadyInBaseSpace = false)
+    private bool InsertAppliedVertexIntoLayerData(LayerVertexData data, Vector2 pointDoc, bool pointAlreadyInBaseSpace = false,
+        bool allowBoundarySnap = true)
     {
         if (data == null || data.vertices == null || data.vertices.Length == 0)
             return false;
@@ -199,12 +200,17 @@ public partial class PsdLayerPreviewRenderer
             data.deformedVertices[oldCount] = basePointDoc;
         }
 
-        var hadBoundaryInsert =
-            TryInsertVertexIntoBoundaryLoop(data.boundaryEdgePairs, oldVertices, basePointDoc, oldCount, out var updatedBoundaryPairs) &&
+        var boundaryEligible = allowBoundarySnap;
+        for (var edge = 0; !boundaryEligible && data.boundaryEdgePairs != null && edge + 1 < data.boundaryEdgePairs.Length; edge += 2)
+            boundaryEligible = DistancePointToSegment(basePointDoc, oldVertices[data.boundaryEdgePairs[edge]],
+                oldVertices[data.boundaryEdgePairs[edge + 1]]) <= 0.01f;
+        int[] updatedBoundaryPairs = null;
+        var hadBoundaryInsert = boundaryEligible &&
+            TryInsertVertexIntoBoundaryLoop(data.boundaryEdgePairs, oldVertices, basePointDoc, oldCount, out updatedBoundaryPairs) &&
             updatedBoundaryPairs != null &&
             updatedBoundaryPairs.Length >= 6;
 
-        var triangulated = TryInsertVertexIntoTriangles(data, oldVertices, basePointDoc, oldCount);
+        var triangulated = TryInsertVertexIntoTriangles(data, oldVertices, basePointDoc, oldCount, allowBoundarySnap);
         if (triangulated)
         {
             if (hadBoundaryInsert)
@@ -246,7 +252,8 @@ public partial class PsdLayerPreviewRenderer
         return true;
     }
 
-    private static bool TryInsertVertexIntoTriangles(LayerVertexData data, Vector2[] verticesBeforeInsert, Vector2 pointDoc, int newIndex)
+    private static bool TryInsertVertexIntoTriangles(LayerVertexData data, Vector2[] verticesBeforeInsert, Vector2 pointDoc, int newIndex,
+        bool allowEdgeSnap = true)
     {
         if (data == null || verticesBeforeInsert == null || verticesBeforeInsert.Length == 0)
             return false;
@@ -268,7 +275,7 @@ public partial class PsdLayerPreviewRenderer
             return false;
 
         var minDistanceToEdge = Mathf.Min(dAB, Mathf.Min(dBC, dCA));
-        var edgeSnap = Mathf.Max(0.45f, avgEdgeLength * 0.1f);
+        var edgeSnap = allowEdgeSnap ? Mathf.Max(0.45f, avgEdgeLength * 0.1f) : 0.01f;
         if (minDistanceToEdge <= edgeSnap)
         {
             var edgeA = ia;

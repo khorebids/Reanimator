@@ -42,6 +42,7 @@ public sealed class PsdPreviewDrawOptions
     internal Reanimator.SystemApi Api { get; set; }
     internal IReanimatorPreviewModule ActivePreviewModule { get; set; }
     internal IReanimatorDebugPreviewModule ActiveDebugPreviewModule { get; set; }
+    internal System.Collections.Generic.ISet<PsdLayerPreviewRenderer.LayerInfo> TemporarilyHiddenLayers { get; set; }
 
     private PsdPreviewDrawOptions()
     {

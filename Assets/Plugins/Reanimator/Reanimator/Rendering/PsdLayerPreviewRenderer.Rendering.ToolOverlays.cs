@@ -1520,6 +1520,11 @@ public partial class PsdLayerPreviewRenderer
     {
         if (toCanvas == null)
             return;
+        if (BoobToolVersion == 2)
+        {
+            DrawSideAssPreview(toCanvas);
+            return;
+        }
         if (BoobToolVersion == 1)
         {
             DrawBoobV2Preview(toCanvas, alpha);
@@ -1715,7 +1720,7 @@ public partial class PsdLayerPreviewRenderer
         Handles.DrawSolidDisc(point, Vector3.forward, 2f);
     }
 
-    private static void DrawBoobV2Contour(
+    internal static void DrawBoobV2Contour(
         Func<Vector2, Vector2> toCanvas,
         IReadOnlyList<Vector2> contour,
         Color color,

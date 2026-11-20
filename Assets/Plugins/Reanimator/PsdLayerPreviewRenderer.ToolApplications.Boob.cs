@@ -1425,7 +1425,7 @@ public partial class PsdLayerPreviewRenderer
         return string.IsNullOrEmpty(cleaned) ? "unnamed layer" : cleaned;
     }
 
-    public bool ApplyBoobV2(out string result, out string error)
+    public bool ApplyBoobV2(out string result, out string error, LayerInfo fixedLayer = null)
     {
         result = string.Empty;
         error = string.Empty;
@@ -1458,7 +1458,9 @@ public partial class PsdLayerPreviewRenderer
 
         var firstRestTarget = firstTarget;
         var secondRestTarget = secondTarget;
-        if (TryFindBoobConstraintLayer((firstTarget + secondTarget) * 0.5f, out var targetLayer) ||
+        var targetLayer = fixedLayer;
+        if (targetLayer != null ||
+            TryFindBoobConstraintLayer((firstTarget + secondTarget) * 0.5f, out targetLayer) ||
             TryFindBoobConstraintLayer(firstTarget, out targetLayer))
         {
             firstRestTarget = MapNippleGuessToBase(targetLayer, firstTarget);
@@ -1471,7 +1473,7 @@ public partial class PsdLayerPreviewRenderer
                 firstContour,
                 secondContour,
                 out result,
-                out error))
+                out error, fixedLayer))
         {
             return false;
         }
@@ -1943,7 +1945,8 @@ public partial class PsdLayerPreviewRenderer
         IReadOnlyList<Vector2> viewerLeftContourDocumentPoints,
         IReadOnlyList<Vector2> viewerRightContourDocumentPoints,
         out string result,
-        out string error)
+        out string error,
+        LayerInfo fixedLayer = null)
     {
         result = string.Empty;
         error = string.Empty;
@@ -1954,11 +1957,6 @@ public partial class PsdLayerPreviewRenderer
             return false;
         }
 
-        if (!TryFindFullBoobRendererBones(out var firstBoobBone, out var secondBoobBone))
-        {
-            error = "Bones l_nipple and r_nipple are required";
-            return false;
-        }
         if (!TryFindFullBoobSpineRendererBone(out var spineRendererBone))
         {
             error = "Bone spine is required";
@@ -1966,7 +1964,8 @@ public partial class PsdLayerPreviewRenderer
         }
 
         var middle = (viewerLeftNippleDocumentPoint + viewerRightNippleDocumentPoint) * 0.5f;
-        if (!TryFindBoobConstraintLayer(middle, out var layer) || layer == null)
+        var layer = fixedLayer;
+        if (layer == null && (!TryFindBoobConstraintLayer(middle, out layer) || layer == null))
         {
             if (!TryFindBoobConstraintLayer(viewerLeftNippleDocumentPoint, out layer) || layer == null)
             {
@@ -1979,6 +1978,14 @@ public partial class PsdLayerPreviewRenderer
         {
             error = "Body geometry is empty";
             return false;
+        }
+
+        var hasNippleBones = TryFindFullBoobRendererBones(out var firstBoobBone, out var secondBoobBone);
+        if (!hasNippleBones || !TryFindBoneIndexByName("boob_root", out _))
+        {
+            if (!TryPlaceFullBoobBones(layer, viewerLeftNippleDocumentPoint, viewerRightNippleDocumentPoint, out error) ||
+                !TryFindFullBoobRendererBones(out firstBoobBone, out secondBoobBone))
+                return false;
         }
 
         var leftCenter = MapNippleGuessToBase(layer, viewerLeftNippleDocumentPoint);

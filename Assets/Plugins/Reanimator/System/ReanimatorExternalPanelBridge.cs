@@ -47,6 +47,12 @@ public interface IReanimatorExternalPanel
     void DrawPreviewOverlay(IReanimatorExternalPanelHost host);
 }
 
+public interface IReanimatorReanimatePanel
+{
+    System.Threading.Tasks.Task RunReanimateAsync(IReanimatorExternalPanelHost host, Func<string> applyManualSkeleton,
+        Func<string> applyContoursAndCook, Func<string> applyManualBelly = null);
+}
+
 public interface IReanimatorAllInGraphPanel
 {
     void DrawAllInGraph(IReanimatorExternalPanelHost host);
@@ -89,8 +95,14 @@ public interface IReanimatorExternalPanelHost
     string ApplyDeterministicAutoWeights(int regions = -1, bool applyLimbs = true);
     AnimationCurve LimbWeightCurve { get; set; }
     string[] ApplySelectedAutoLimbJoints(int joints);
+    string ApplyAutomaticElbowJoints(int targets);
+    string ApplyShoulderContours();
+    string GetShoulderContourPreflightError();
+    AnimationCurve ElbowWeightCurve { get; set; }
     string ApplyBellyLimb();
     string ApplyAutoSoftContour(int targets);
+    int SideAssTargets { get; }
+    string ApplySelectedSideAss();
     string GenerateMissingGeometry();
     string ApplyFaceEyesAutomation();
     string LocateNipples(

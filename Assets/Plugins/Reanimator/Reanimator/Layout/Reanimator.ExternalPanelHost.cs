@@ -193,6 +193,22 @@ public partial class Reanimator
         }
     }
 
+    string IReanimatorExternalPanelHost.ApplyAutomaticElbowJoints(int targets) =>
+        layerPreviewRenderer.ApplyAutomaticElbowJoints(targets);
+
+    string IReanimatorExternalPanelHost.ApplyShoulderContours() => layerPreviewRenderer.ApplyAllShoulderContours();
+    string IReanimatorExternalPanelHost.GetShoulderContourPreflightError() => layerPreviewRenderer.GetShoulderDraftError();
+
+    AnimationCurve IReanimatorExternalPanelHost.ElbowWeightCurve
+    {
+        get => layerPreviewRenderer.CorrectiveElbowWeightCurve;
+        set
+        {
+            layerPreviewRenderer.CorrectiveElbowWeightCurve = value;
+            layerPreviewRenderer.SaveCorrectiveElbowWeightCurve();
+        }
+    }
+
     string[] IReanimatorExternalPanelHost.ApplySelectedAutoLimbJoints(int joints)
     {
         return layerPreviewRenderer.ApplySelectedAutoLimbJoints(joints);
@@ -202,6 +218,10 @@ public partial class Reanimator
     {
         return RunNativeUndoGroup("SC", () => layerPreviewRenderer.ApplyAllInSoftContour(targets));
     }
+
+    int IReanimatorExternalPanelHost.SideAssTargets=>layerPreviewRenderer?.SideAssAllInTargets??0;
+    string IReanimatorExternalPanelHost.ApplySelectedSideAss()=>RunNativeUndoGroup("Side Ass",()=>
+        "Side Ass applied: "+string.Join(", ",layerPreviewRenderer.ApplySelectedSideAss()));
 
     string IReanimatorExternalPanelHost.ApplyBellyLimb()
     {
@@ -436,7 +456,7 @@ public partial class Reanimator
             throw new System.InvalidOperationException("Select PSD/PSB asset in Reanimator.");
 
         ApplyBeforeCookPrefab(path);
-        var result = ReanimatorPrefabCooker.CookNextToPsd(path);
+        var result = ReanimatorPrefabCooker.CookNextToPsd(path, previewRenderer: layerPreviewRenderer);
         Repaint();
         return result.ToStatus();
     }

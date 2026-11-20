@@ -48,15 +48,74 @@ public partial class PsdLayerPreviewRenderer
                 return false;
         }
 
+        var drawVertices = GetLayerVerticesForDraw(data);
+        var posed = drawVertices != null && !ReferenceEquals(drawVertices, data.vertices);
+        var targetDoc = posed
+            ? PsdCoordinateSpace.MapMeshPointOrSelf(data.vertices, drawVertices, data.triangles, basePointDoc)
+            : basePointDoc;
+        var hasWeight = TryTransferWeightFromSource(basePointDoc, data, out var newWeight);
+        var storedPoint = basePointDoc;
+        if (posed && hasWeight && !TryUnskinEditGeometryPoint(data, targetDoc, newWeight, out storedPoint))
+            return false;
+
         RegisterUndo("Create Geometry Vertex");
         var newVertexIndex = data.vertices.Length;
         if (!InsertAppliedVertexIntoLayerData(data, basePointDoc, true))
             return false;
 
+        if (hasWeight)
+            data.boneWeights[newVertexIndex] = newWeight;
+        data.vertices[newVertexIndex] = storedPoint;
+
         vertexIndex = newVertexIndex;
         ApplyEditGeometryVertexSelection(selectionKey, stableKey, vertexIndex);
         MarkEditGeometryDataChanged(data, selectionKey, stableKey);
         return true;
+    }
+
+    private bool TryUnskinEditGeometryPoint(LayerVertexData data, Vector2 target, BoneWeight weight,
+        out Vector2 basePoint)
+    {
+        basePoint = target;
+        BuildSkinMatrices(data);
+        if (data.skinMatrices == null)
+            return false;
+
+        const float basisLength = 128f;
+        var origin = Transform(target);
+        var x = (Transform(target + Vector2.right * basisLength) - origin) / basisLength;
+        var y = (Transform(target + Vector2.up * basisLength) - origin) / basisLength;
+        var determinant = x.x * y.y - x.y * y.x;
+        if (Mathf.Abs(determinant) < 1e-8f)
+            return false;
+        var offset = target - origin;
+        basePoint = target + new Vector2((offset.x * y.y - offset.y * y.x) / determinant,
+            (x.x * offset.y - x.y * offset.x) / determinant);
+        return !float.IsNaN(basePoint.x) && !float.IsNaN(basePoint.y) &&
+            !float.IsInfinity(basePoint.x) && !float.IsInfinity(basePoint.y);
+
+        Vector2 Transform(Vector2 point)
+        {
+            var input = data.usesSpriteBindPoses ? DocumentToSpriteSkinPosition(data, point) : point;
+            var sum = weight.weight0 + weight.weight1 + weight.weight2 + weight.weight3;
+            if (sum <= 1e-6f)
+                return point;
+            var result = Vector3.zero;
+            Add(weight.boneIndex0, weight.weight0);
+            Add(weight.boneIndex1, weight.weight1);
+            Add(weight.boneIndex2, weight.weight2);
+            Add(weight.boneIndex3, weight.weight3);
+            var skinned = (Vector2)result;
+            return data.usesSpriteBindPoses ? SpriteSkinPositionToDocument(data, skinned) :
+                Vector2.Lerp(point, skinned, Mathf.Clamp01(sum));
+
+            void Add(int index, float influence)
+            {
+                if (influence <= 1e-6f || index < 0 || index >= data.skinMatrices.Length)
+                    return;
+                result += data.skinMatrices[index].MultiplyPoint3x4(input) * (influence / sum);
+            }
+        }
     }
 
     private bool TryDeleteEditGeometryVertex(string selectionKey, string stableKey, int vertexIndex)
@@ -377,10 +436,16 @@ public partial class PsdLayerPreviewRenderer
             return false;
         if (NormalizeEditGeometrySelection(data, stableKey) <= 0)
             return false;
+        return TryDeleteVerticesAndRebuild(data, editGeometrySelectedVertexIndices);
+    }
 
+    private bool TryDeleteVerticesAndRebuild(LayerVertexData data, IReadOnlyList<int> indices)
+    {
+        if (data?.vertices == null || data.vertices.Length <= 3)
+            return false;
         var vertexCount = data.vertices.Length;
         var removeMask = ReanimatorEditGeometryAlgorithms.BuildRemoveMask(
-            editGeometrySelectedVertexIndices,
+            indices,
             vertexCount,
             out var removedCount);
 

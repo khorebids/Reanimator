@@ -6,7 +6,7 @@ using UnityEngine;
 [DisallowMultipleComponent]
 // Apply IK and secondary motion before SpriteSkin's deformation pass at order 10.
 [DefaultExecutionOrder(0)]
-public sealed class ReaniIK : MonoBehaviour
+public sealed partial class ReaniIK : MonoBehaviour
 {
     [Serializable]
     public sealed class VModeEntry
@@ -42,7 +42,7 @@ public sealed class ReaniIK : MonoBehaviour
     }
 
     [Serializable]
-    public sealed class SpringGroup
+    public class SpringGroup
     {
         public bool enabled = true;
         public Transform[] bones = Array.Empty<Transform>();
@@ -55,15 +55,30 @@ public sealed class ReaniIK : MonoBehaviour
         public void RestorePose() => simulation?.RestorePose();
         public void Reset() => simulation?.ResetSimulation();
 
-        public void Simulate(float dt)
+        public void Simulate(float dt, bool rotationOnly = false, float gravitySag = 0f)
         {
             if (!enabled)
             {
                 Reset();
                 return;
             }
-            if (simulation == null) simulation = new SpringBoneSimulation2D();
-            simulation.Simulate(bones, frequency, damping, inertia, maximumOffset, dt);
+            if (simulation == null) simulation = new SpringBoneSimulation2D(rotationOnly);
+            simulation.Simulate(bones, frequency, damping, inertia, maximumOffset, dt, gravitySag);
+        }
+    }
+
+    [Serializable]
+    public sealed class BreastSpringGroup : SpringGroup
+    {
+        [Min(0f), Tooltip("Resting downward offset in parent space units, along world down.")]
+        public float gravitySag = 0.025f;
+
+        public BreastSpringGroup()
+        {
+            frequency = 2f;
+            damping = 0.2f;
+            inertia = 0.7f;
+            maximumOffset = 1f;
         }
     }
 
@@ -125,21 +140,29 @@ public sealed class ReaniIK : MonoBehaviour
         [NonSerialized] private Quaternion appliedLower;
         [NonSerialized] private Quaternion appliedTip;
         [NonSerialized] private bool applied;
+        [NonSerialized] private bool appliedTranslation;
+        [NonSerialized] private Vector3 baseUpperPosition, appliedUpperPosition;
 
-        public bool IsValid => upper && lower && tip && target &&
-            lower.parent == upper && tip.parent == lower && !target.IsChildOf(upper);
+        public int BoneCount => !upper || !tip ? 0 : lower ? 3 : tip == upper ? 1 : 2;
+        public bool IsValid => upper && tip && target && !target.IsChildOf(upper) &&
+            (lower ? lower != upper && lower.parent == upper && tip.parent == lower :
+                tip == upper || tip.parent == upper);
 
         public void CaptureDefaultPose()
         {
-            if (!upper || !lower || !tip) return;
+            if (!upper || !tip) return;
             defaultUpper = upper.localRotation;
-            defaultLower = lower.localRotation;
+            defaultLower = lower ? lower.localRotation : Quaternion.identity;
             defaultTip = tip.localRotation;
         }
 
         public void RestorePose()
         {
             if (!applied) return;
+            if (appliedTranslation && savedUpper &&
+                (savedUpper.localPosition - appliedUpperPosition).sqrMagnitude < 1e-10f)
+                savedUpper.localPosition = baseUpperPosition;
+            appliedTranslation = false;
             RestoreRotation(savedUpper, appliedUpper, baseUpper);
             RestoreRotation(savedLower, appliedLower, baseLower);
             RestoreRotation(savedTip, appliedTip, baseTip);
@@ -156,6 +179,11 @@ public sealed class ReaniIK : MonoBehaviour
         {
             float blend = Mathf.Clamp01(weight * globalWeight);
             if (!enabled || !IsValid || blend <= 0f) return;
+            if (!lower)
+            {
+                SolveShortChain(blend);
+                return;
+            }
 
             savedUpper = upper;
             savedLower = lower;
@@ -233,6 +261,40 @@ public sealed class ReaniIK : MonoBehaviour
             applied = true;
         }
 
+        private void SolveShortChain(float blend)
+        {
+            savedUpper = upper;
+            savedLower = null;
+            savedTip = tip != upper ? tip : null;
+            baseUpper = upper.localRotation;
+            baseTip = tip.localRotation;
+            baseUpperPosition = upper.localPosition;
+            if (tip == upper)
+            {
+                // A single existing bone is a pose control, never an IK chain through the hips.
+                upper.position = EffectiveTarget;
+                upper.localPosition = Vector3.Lerp(baseUpperPosition, upper.localPosition, blend);
+                appliedUpperPosition = upper.localPosition;
+                appliedTranslation = true;
+                if (constrainRotation)
+                    upper.rotation = Quaternion.Slerp(upper.rotation, target.rotation, blend);
+            }
+            else
+            {
+                if (solveFromDefaultPose) upper.localRotation = defaultUpper;
+                Vector2 direction = upper.InverseTransformPoint(EffectiveTarget);
+                Vector2 segment = tip.localPosition;
+                if (direction.sqrMagnitude > 1e-10f && segment.sqrMagnitude > 1e-10f)
+                    upper.localRotation *= Quaternion.AngleAxis(Vector2.SignedAngle(segment, direction), Vector3.forward);
+                if (constrainRotation) tip.rotation = target.rotation;
+                upper.localRotation = Quaternion.Slerp(baseUpper, upper.localRotation, blend);
+                if (constrainRotation) tip.localRotation = Quaternion.Slerp(baseTip, tip.localRotation, blend);
+            }
+            appliedUpper = upper.localRotation;
+            appliedTip = tip.localRotation;
+            applied = true;
+        }
+
         private void AimAt(Vector3 worldTarget, float upperAngle)
         {
             upper.localRotation *= Quaternion.AngleAxis(upperAngle, Vector3.forward);
@@ -245,27 +307,42 @@ public sealed class ReaniIK : MonoBehaviour
     }
 
     public bool previewInEditor = true;
+    public ReaniIKBodyScale bodyScale = new ReaniIKBodyScale();
     [Range(0f, 1f)] public float ikWeight = 1f;
-    public SpringGroup breasts = new SpringGroup();
+    public BreastSpringGroup breasts = new BreastSpringGroup();
     public SpringGroup softContour = new SpringGroup();
+    public SpringGroup springRotation = new SpringGroup { maximumOffset = 0.5f };
     public SpringGroup frontHair = new SpringGroup { frequency = 2.8f, damping = 0.3f, maximumOffset = 0.1f };
     public SpringGroup backHair = new SpringGroup { frequency = 2.2f, damping = 0.28f, maximumOffset = 0.18f };
     public Limb leftArm = new Limb { flip = true };
+    public ReaniIKArmMask leftArmMask = new ReaniIKArmMask();
     public Limb rightArm = new Limb();
+    public ReaniIKArmMask rightArmMask = new ReaniIKArmMask();
+    public ReaniIKSurfaceEffects surfaceEffects = new ReaniIKSurfaceEffects();
     public Limb leftLeg = new Limb { flip = true };
     public Limb rightLeg = new Limb();
     public Limb leftArm2 = new Limb();
     public Limb rightArm2 = new Limb();
+    [UnityEngine.Serialization.FormerlySerializedAs("breathingAmplitude")]
+    [Range(0f, 3f), Tooltip("Breathing speed relative to the configured period. Zero pauses the cycle.")]
+    public float breathingFrequency = 1f;
+    [Range(0f, 3f), Tooltip("Multiplier for breathing position, scale and rotation changes.")]
+    public float breathingMultiplier = 1f;
     public RigBreathing2D breathing = new RigBreathing2D();
     public List<VModeEntry> v_mode = new List<VModeEntry>();
     private readonly List<(Transform bone, Vector3 before, Vector3 after)> vModeOffsets =
         new List<(Transform, Vector3, Vector3)>();
     [Header("Scene Controls")]
     public bool showHipsControl = true;
+    public bool showRootControl = true;
     public bool showSpineControl = true;
+    public bool showBellyControl = true;
+    public bool showShouldersControl = true;
     public bool showNeckControl = true;
-    public bool showEyesControl = true;
-    public bool showEyelidsControl = true;
+    public bool showFaceControl = true;
+    public bool showButtControl = true;
+    [InspectorName("Face Control Multipliers")]
+    public ReaniIKFacePose facePose = new ReaniIKFacePose();
 
 #if UNITY_EDITOR
     private double previousTime;
@@ -273,21 +350,37 @@ public sealed class ReaniIK : MonoBehaviour
 
     private void OnEnable()
     {
+        RefreshBoneRigDrivers();
+        breathing.Restore();
+        ReaniIKSurfaceEffects.RemoveLegacyPropertyBlocks(transform);
+        surfaceEffects.RepairMissingMaterials(transform);
+        ReaniIKLegSetup.Configure(this);
+        breathing.DiscoverFaceBones(transform);
+        facePose.DiscoverBones(transform);
         if (softContour.bones == null || softContour.bones.Length == 0)
             softContour.bones = Array.FindAll(GetComponentsInChildren<Transform>(true), IsSoftContourBone);
+        if (springRotation.bones == null || springRotation.bones.Length == 0)
+            springRotation.bones = Array.FindAll(GetComponentsInChildren<Transform>(true), IsSpringRotationBone);
         ResetSpringMotion();
 #if UNITY_EDITOR
+        ReaniIKSurfaceAuthoring.BindExisting(this);
         previousTime = UnityEditor.EditorApplication.timeSinceStartup;
         UnityEditor.EditorApplication.update += EditorTick;
         UnityEditor.SceneManagement.EditorSceneManager.sceneSaving += BeforeSceneSave;
+        UnityEditor.SceneManagement.PrefabStage.prefabSaving += BeforePrefabSave;
 #endif
     }
 
     private void OnDisable()
     {
+        foreach (var booty in GetComponentsInChildren<SideAssRig2D>(true)) booty.RestorePose();
+        leftArmMask.Release();
+        rightArmMask.Release();
+        surfaceEffects.Release();
 #if UNITY_EDITOR
         UnityEditor.EditorApplication.update -= EditorTick;
         UnityEditor.SceneManagement.EditorSceneManager.sceneSaving -= BeforeSceneSave;
+        UnityEditor.SceneManagement.PrefabStage.prefabSaving -= BeforePrefabSave;
 #endif
         RestorePose();
         ResetSpringMotion();
@@ -300,6 +393,10 @@ public sealed class ReaniIK : MonoBehaviour
 
     private void LateUpdate()
     {
+        surfaceEffects.Prepare(transform);
+        // Also preview the mask when IK motion preview is paused or Animation Mode is active.
+        leftArmMask.Apply(transform, leftArm);
+        rightArmMask.Apply(transform, rightArm);
         float dt = Time.deltaTime;
 #if UNITY_EDITOR
         if (!Application.isPlaying)
@@ -311,31 +408,38 @@ public sealed class ReaniIK : MonoBehaviour
             {
                 RestorePose();
                 ResetSpringMotion();
+                EvaluateHiddenBoneRigs(dt);
+                surfaceEffects.Tick(transform);
                 return;
             }
         }
 #endif
         Evaluate(dt);
+        surfaceEffects.Tick(transform);
     }
 
     public void Evaluate(float deltaTime)
     {
         RestorePose();
+        bodyScale.Apply(this);
         // Capture newly assigned chains before the other rig modules move them.
         foreach (var entry in v_mode)
             entry?.TryGetOffset(out _);
-        breathing.Evaluate(transform, deltaTime);
+        breathing.Evaluate(transform, deltaTime, breathingFrequency, breathingMultiplier);
+        facePose.Apply(transform);
         leftArm.Solve(ikWeight, deltaTime);
         rightArm.Solve(ikWeight, deltaTime);
         leftArm2.Solve(ikWeight, deltaTime);
         rightArm2.Solve(ikWeight, deltaTime);
         leftLeg.Solve(ikWeight, deltaTime);
         rightLeg.Solve(ikWeight, deltaTime);
-        breasts.Simulate(deltaTime);
+        EvaluateHiddenBoneRigs(deltaTime);
+        breasts.Simulate(deltaTime, gravitySag: breasts.gravitySag);
         softContour.Simulate(deltaTime);
         frontHair.Simulate(deltaTime);
         backHair.Simulate(deltaTime);
         ApplyVMode();
+        springRotation.Simulate(deltaTime, rotationOnly: true);
     }
 
     private void ApplyVMode()
@@ -361,6 +465,7 @@ public sealed class ReaniIK : MonoBehaviour
 
     private void RestorePose()
     {
+        RestoreHiddenBoneRigPoses();
         for (var i = vModeOffsets.Count - 1; i >= 0; i--)
         {
             var entry = vModeOffsets[i];
@@ -368,6 +473,7 @@ public sealed class ReaniIK : MonoBehaviour
                 entry.bone.localPosition = entry.before;
         }
         vModeOffsets.Clear();
+        springRotation.RestorePose();
         breasts.RestorePose();
         softContour.RestorePose();
         frontHair.RestorePose();
@@ -378,20 +484,48 @@ public sealed class ReaniIK : MonoBehaviour
         rightArm2.RestorePose();
         leftLeg.RestorePose();
         rightLeg.RestorePose();
+        facePose.Restore();
         breathing.Restore();
+        bodyScale.Restore();
     }
 
     public void ResetSpringMotion()
     {
+        springRotation.Reset();
         breasts.Reset();
         softContour.Reset();
         frontHair.Reset();
         backHair.Reset();
     }
 
+#if UNITY_EDITOR
+    // Editor pose edits must start from the authored pose, rather than baking
+    // the current breathing, IK, spring or body-size offsets into new defaults.
+    public void RestoreProceduralPoseForEditing()
+    {
+        RestorePose();
+        ResetSpringMotion();
+    }
+#endif
+
     internal static bool IsSoftContourBone(Transform bone)
     {
         return bone && bone.name.EndsWith("_SC", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool IsSpringRotationBone(Transform bone)
+    {
+        return bone && IsSpringRotationBoneName(bone.name);
+    }
+
+    internal static bool IsSpringRotationBoneName(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return false;
+        if (name.EndsWith("_SR", StringComparison.OrdinalIgnoreCase))
+            return true;
+        var marker = name.LastIndexOf("_SRN_", StringComparison.OrdinalIgnoreCase);
+        return marker > 0 && int.TryParse(name.Substring(marker + 5), out var index) && index > 0;
     }
 
     public void CaptureDefaultLimbPoses()
@@ -413,6 +547,11 @@ public sealed class ReaniIK : MonoBehaviour
         {
             RestorePose();
             ResetSpringMotion();
+            if (surfaceEffects.NeedsAnimation)
+            {
+                UnityEditor.EditorApplication.QueuePlayerLoopUpdate();
+                UnityEditor.SceneView.RepaintAll();
+            }
             return;
         }
         if (UnityEditor.EditorApplication.timeSinceStartup - previousTime < 1.0 / 60.0) return;
@@ -423,8 +562,23 @@ public sealed class ReaniIK : MonoBehaviour
     private void BeforeSceneSave(UnityEngine.SceneManagement.Scene scene, string path)
     {
         if (scene != gameObject.scene) return;
+        foreach (var booty in GetComponentsInChildren<SideAssRig2D>(true)) booty.RestorePose();
+        leftArmMask.Release();
+        rightArmMask.Release();
+        surfaceEffects.Release();
         RestorePose();
         ResetSpringMotion();
+    }
+
+    private void BeforePrefabSave(GameObject prefabRoot)
+    {
+        if (gameObject == prefabRoot || transform.IsChildOf(prefabRoot.transform))
+        {
+            foreach (var booty in GetComponentsInChildren<SideAssRig2D>(true)) booty.RestorePose();
+            leftArmMask.Release();
+            rightArmMask.Release();
+            surfaceEffects.Release();
+        }
     }
 #endif
 }

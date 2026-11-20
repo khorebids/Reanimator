@@ -16,7 +16,7 @@ internal static class ComfimatorPanelBootstrap
     }
 }
 
-internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExternalCommandPanel, IReanimatorExternalBlockingProgressPanel, IReanimatorAllInGraphPanel
+internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExternalCommandPanel, IReanimatorExternalBlockingProgressPanel, IReanimatorAllInGraphPanel, IReanimatorReanimatePanel
 {
     private const string ServerUrlPrefsKey = "Comfimator.Comfy.ServerUrl";
     private const string AutoSkeletonWorkflowPrefsKey = "Comfimator.Comfy.AutoSkeletonWorkflowPath";
@@ -1913,16 +1913,42 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         }
     }
 
-    private async void RunAllIn(IReanimatorExternalPanelHost host)
+    private async void RunAllIn(IReanimatorExternalPanelHost host) =>
+        await RunAllInAutomationAsync(host, null, null);
+
+    public Task RunReanimateAsync(IReanimatorExternalPanelHost host, Func<string> applyManualSkeleton,
+        Func<string> applyContoursAndCook, Func<string> applyManualBelly = null) => RunAllInAutomationAsync(host,
+        applyManualSkeleton ?? throw new ArgumentNullException(nameof(applyManualSkeleton)),
+        applyContoursAndCook ?? throw new ArgumentNullException(nameof(applyContoursAndCook)), applyManualBelly);
+
+    private async Task RunAllInAutomationAsync(IReanimatorExternalPanelHost host, Func<string> applyManualSkeleton,
+        Func<string> applyContoursAndCook, Func<string> applyManualBelly = null)
     {
         if (host == null || allInRunning || autoGeometryRunning || autoSkeletonRunning)
+        {
+            if (applyContoursAndCook != null)
+                throw new InvalidOperationException("Another Reanimator automation is running.");
             return;
+        }
 
+        var label = applyContoursAndCook == null ? "ALLIN" : "Reanimate";
+        if (IsAllInStageEnabled(AllInStage.Shoulders))
+        {
+            var shoulderError = host.GetShoulderContourPreflightError();
+            if (shoulderError != null)
+            {
+                if (applyContoursAndCook != null) throw new InvalidOperationException(shoulderError);
+                host.ShowNotification(shoulderError); actionStatus = shoulderError; actionStatusIsError = true;
+                host.RepaintHost(); return;
+            }
+        }
         allInResults.Clear();
         allInFailedLimbJoints = 0;
         allInActiveNode = "PSD preflight";
         if (!host.TryValidateAllInPreflight(out var preflightError))
         {
+            if (applyContoursAndCook != null)
+                throw new InvalidOperationException(preflightError);
             actionStatus = "ALLIN blocked: " + preflightError;
             actionStatusIsError = true;
             allInBlockingStatus = actionStatus;
@@ -1938,7 +1964,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         var assetPath = host.CurrentAssetPath;
         EnsureSettingsLoaded();
         allInRunning = true;
-        SetAllInProgress("ALLIN: checking Comfy", 0.02f, 0.06f);
+        SetAllInProgress(label + (applyManualSkeleton == null ? ": checking Comfy" : ": preparing PSD"), 0.02f, 0.06f);
         actionStatusIsError = false;
         host.ShowNotification(actionStatus);
         host.RepaintHost();
@@ -1946,7 +1972,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         try
         {
             allInActiveNode = "ComfyUI connection";
-            var checkConnection = IsAllInStageEnabled(AllInStage.Connection);
+            var checkConnection = applyManualSkeleton == null && IsAllInStageEnabled(AllInStage.Connection);
             if (checkConnection)
                 connectionStatus = await ComfimatorComfyClient.CheckConnectionAsync(serverUrl);
             allInResults[allInActiveNode] = checkConnection ? (1f, "Complete") : (0f, "Disabled in graph");
@@ -1954,28 +1980,29 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             RequireCurrentAutomationAsset(host, assetPath);
             RunAllInNode("Generate Missing Geometry", IsAllInStageEnabled(AllInStage.MissingGeometry),
                 host.GenerateMissingGeometry);
-            SetAllInProgress("ALLIN: generating skeleton", 0.34f, 0.68f);
+            SetAllInProgress(label + ": generating skeleton", 0.34f, 0.68f);
             host.RepaintHost();
-            if (!IsAllInStageEnabled(AllInStage.DetectPose))
+            var detectPose = applyManualSkeleton == null && IsAllInStageEnabled(AllInStage.DetectPose);
+            if (!detectPose)
             {
                 allInResults["Auto Skeleton · capture"] = (0f, "Pose detection disabled");
                 allInResults["Auto Skeleton · primary pose"] = (0f, "Pose detection disabled");
                 allInResults["Auto Skeleton · secondary arms"] = (0f, "Pose detection disabled");
             }
-            var result = !IsAllInStageEnabled(AllInStage.DetectPose)
-                ? host.RunUndoGroup("ALLIN", () => ApplyAllInStages(host, null))
+            var result = !detectPose
+                ? host.RunUndoGroup(label, () => ApplyAllInStages(host, applyManualSkeleton, applyContoursAndCook, applyManualBelly))
                 : await RunAutoSkeletonAsync(
                 host,
-                "ALLIN Auto Skeleton",
-                AllInBreastProcessingEnabled,
+                label + " Auto Skeleton",
+                applyContoursAndCook == null && AllInBreastProcessingEnabled,
                 IsAllInStageEnabled(AllInStage.FaceEyes),
                 useQwenNipplePositioning: false,
                 includeSecondaryArms: IsAllInStageEnabled(AllInStage.SecondaryArms),
-                applySkeleton: apply => host.RunUndoGroup("ALLIN", () => ApplyAllInStages(host, apply)));
+                applySkeleton: apply => host.RunUndoGroup(label, () => ApplyAllInStages(host, apply, applyContoursAndCook)));
             allInResults["Complete"] = (1f, "Complete");
-            SetAllInProgress("ALLIN complete", 1f, 1f);
+            SetAllInProgress(label + " complete", 1f, 1f);
             actionStatus = result;
-            host.ShowNotification("ALLIN complete");
+            host.ShowNotification(label + " complete");
         }
         catch (Exception ex)
         {
@@ -1988,11 +2015,13 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             }
             else
             {
-                actionStatus = "ALLIN failed: " + ex.Message;
+                actionStatus = label + " failed: " + ex.Message;
                 actionStatusIsError = true;
                 allInBlockingStatus = actionStatus;
                 host.ShowNotification(actionStatus);
             }
+            if (applyContoursAndCook != null)
+                throw;
         }
         finally
         {
@@ -2027,6 +2056,18 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
     private const float AllInNodeHeight = 88f;
     private const float AllInWeightsNodeHeight = 234f;
     private const string AllInJointsKey = "Reanimator.ALLIN.Joints";
+    private const string AllInElbowsKey = "Reanimator.ALLIN.Elbows";
+    private const string AllInRemainingJointsKey = "Reanimator.ALLIN.RemainingJoints";
+    private static readonly int[] RemainingJointBits = { 1, 3, 5, 7, 8, 9, 11, 13 };
+    private static readonly string[] AllInRemainingJoints =
+    {
+        "Left wrist", "Right wrist", "Left ankle", "Right ankle",
+        "Left hip", "Right hip", "Left wrist (2)", "Right wrist (2)"
+    };
+    private static readonly string[] AllInElbows =
+    {
+        "Left elbow", "Right elbow", "Left knee", "Right knee", "Left elbow (2)", "Right elbow (2)"
+    };
     private int allInFailedLimbJoints;
     private static readonly string[] AllInJoints =
     {
@@ -2044,10 +2085,26 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
     };
 
     private static string[] GetAllInTargets(AllInStage stage) =>
-        stage == AllInStage.Limbs ? AllInJoints : stage == AllInStage.SoftContour ? AllInSoftContourTargets : null;
+        stage == AllInStage.Limbs ? AllInRemainingJoints :
+        stage == AllInStage.Elbows ? AllInElbows : stage == AllInStage.SoftContour ? AllInSoftContourTargets : null;
 
-    private static string GetAllInTargetsKey(AllInStage stage) =>
-        stage == AllInStage.SoftContour ? AllInSoftContourKey : AllInJointsKey;
+    private static string GetAllInTargetsKey(AllInStage stage)
+    {
+        if (stage == AllInStage.SoftContour)
+            return AllInSoftContourKey;
+        if (stage == AllInStage.Elbows)
+            return AllInElbowsKey;
+        if (!EditorPrefs.HasKey(AllInRemainingJointsKey))
+        {
+            var previous = EditorPrefs.GetInt(AllInJointsKey, -1);
+            var remaining = 0;
+            for (var i = 0; i < RemainingJointBits.Length; i++)
+                if ((previous & (1 << RemainingJointBits[i])) != 0)
+                    remaining |= 1 << i;
+            EditorPrefs.SetInt(AllInRemainingJointsKey, remaining);
+        }
+        return AllInRemainingJointsKey;
+    }
 
     private static Rect AllInWeightRegionRect(float x, int index)
     {
@@ -2074,7 +2131,9 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         Belly,
         SoftContour,
         RestPose,
-        FaceEyes
+        FaceEyes,
+        Elbows,
+        Shoulders
     }
 
     private static bool IsAllInStageEnabled(AllInStage stage)
@@ -2117,9 +2176,12 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
             new GraphStage("Auto Geometry", "Generate default geometry. OFF uses the existing geometry.", AllInStage.Geometry),
             new GraphStage("Apply skeleton", "Apply the detected pose. OFF keeps the existing skeleton.", AllInStage.Skeleton),
             new GraphStage("Auto Weights", "Recalculate weights on all supported sprite parts.", AllInStage.Weights),
-            new GraphStage("Limbs", "Process selected joints on the current rig.", AllInStage.Limbs),
+            new GraphStage("Limbs", "Process wrists, ankles and hips.", AllInStage.Limbs),
+            new GraphStage("Shoulders", "Apply the saved shoulder weld outlines and curves to both arms.", AllInStage.Shoulders),
             new GraphStage("Belly", "Apply Bone-mode Limbs to the belly bone.", AllInStage.Belly),
+            new GraphStage("Elbow", "Apply the two-helper Elbow rig to elbows and knees.", AllInStage.Elbows),
             new GraphStage("SC", "Apply Auto Soft Contour to enabled sprite and bone pairs.", AllInStage.SoftContour),
+            new GraphStage("Side Ass", "Apply the current Side Ass curve to the legs enabled on Full PSD, after SC."),
             new GraphStage("Commit rest pose", "Commit the current bone pose as rest.", AllInStage.RestPose),
             new GraphStage("Face Eyes", "Apply automated eye geometry and weights.", AllInStage.FaceEyes),
             new GraphStage("Complete", "Report the result of the run."),
@@ -2158,6 +2220,14 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
                                 new Keyframe(0.575f, 1f),
                                 new Keyframe(1f, 1f));
                     }
+                }
+
+                if (selectedAllInStage >= 0 && allInStages[selectedAllInStage].Stage == AllInStage.Elbows)
+                {
+                    EditorGUI.BeginChangeCheck();
+                    var curve = EditorGUILayout.CurveField("Helper → Child", host.ElbowWeightCurve);
+                    if (EditorGUI.EndChangeCheck())
+                        host.ElbowWeightCurve = curve;
                 }
 
                 if (GUILayout.Button("Reset view", EditorStyles.miniButton))
@@ -2266,7 +2336,7 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
                         for (var region = 0; region < targets.Length; region++)
                         {
                             var selected = (regions & (1 << region)) != 0;
-                            GUI.color = stage.Stage == AllInStage.Limbs && selected && (allInFailedLimbJoints & (1 << region)) != 0
+                            GUI.color = stage.Stage == AllInStage.Limbs && selected && (allInFailedLimbJoints & (1 << RemainingJointBits[region])) != 0
                                 ? normalColor * new Color(1f, 0.42f, 0.42f)
                                 : normalColor;
                             EditorStyles.toggle.Draw(ToCanvas(AllInWeightRegionRect(x, region)), new GUIContent(targets[region]),
@@ -2312,30 +2382,44 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
         return new Rect(x + AllInNodeWidth - 25f, 9f, 18f, 18f);
     }
 
-    private string ApplyAllInStages(IReanimatorExternalPanelHost host, Func<string> applySkeleton)
+    private string ApplyAllInStages(IReanimatorExternalPanelHost host, Func<string> applySkeleton,
+        Func<string> applyContoursAndCook = null, Func<string> applyManualBelly = null)
     {
         var geometry = RunAllInNode("Auto Geometry", IsAllInStageEnabled(AllInStage.Geometry), () => RunAutoGeometry(host));
-        var skeleton = RunAllInNode("Apply skeleton", applySkeleton != null && IsAllInStageEnabled(AllInStage.Skeleton),
+        var skeleton = RunAllInNode("Apply skeleton", applySkeleton != null &&
+            (applyContoursAndCook != null || IsAllInStageEnabled(AllInStage.Skeleton)),
             applySkeleton, applySkeleton == null ? "Pose detection disabled" : "Disabled in graph");
         var weights = RunAllInNode("Auto Weights", IsAllInStageEnabled(AllInStage.Weights),
             () => host.ApplyDeterministicAutoWeights(-1, false));
         var limbs = RunAllInLimbs(host);
-        var belly = RunAllInNode("Belly", IsAllInStageEnabled(AllInStage.Belly), host.ApplyBellyLimb);
-        var softContour = RunAllInNode("SC", IsAllInStageEnabled(AllInStage.SoftContour),
+        var shoulders = RunAllInNode("Shoulders", IsAllInStageEnabled(AllInStage.Shoulders), host.ApplyShoulderContours);
+        var belly = RunAllInNode("Belly", applyManualBelly != null || IsAllInStageEnabled(AllInStage.Belly),
+            applyManualBelly ?? host.ApplyBellyLimb);
+        var elbows = RunAllInNode("Elbow", IsAllInStageEnabled(AllInStage.Elbows),
+            () => host.ApplyAutomaticElbowJoints(EditorPrefs.GetInt(AllInElbowsKey, -1)));
+        var softContour = RunAllInNode("SC", applyContoursAndCook == null && IsAllInStageEnabled(AllInStage.SoftContour),
             () => host.ApplyAutoSoftContour(EditorPrefs.GetInt(AllInSoftContourKey, -1)));
+        var sideAss=RunAllInNode("Side Ass",applyContoursAndCook==null && host.SideAssTargets!=0,host.ApplySelectedSideAss,
+            applyContoursAndCook!=null?"Applied after manual SC":"No Side Ass legs enabled");
         RunAllInNode("Commit rest pose", IsAllInStageEnabled(AllInStage.RestPose), () =>
         {
             host.CommitCurrentBonePoseAsRest();
             return "Complete";
         });
         var faceEyes = RunAllInNode("Face Eyes", IsAllInStageEnabled(AllInStage.FaceEyes), () => RunFaceEyes(host));
+        if (applyContoursAndCook != null)
+            return RunAllInNode("Manual contours and prefab", true, applyContoursAndCook);
         return "ALLIN complete: " + geometry + "; Auto Skeleton: " + skeleton + "; " +
-               weights + "; " + limbs + "; " + belly + "; " + softContour + "; " + faceEyes;
+               weights + "; " + limbs + "; " + shoulders + "; " + belly + "; " + elbows + "; " + softContour + "; " + sideAss + "; " + faceEyes;
     }
 
     private string RunAllInLimbs(IReanimatorExternalPanelHost host)
     {
-        var joints = EditorPrefs.GetInt(AllInJointsKey, -1);
+        var selected = EditorPrefs.GetInt(GetAllInTargetsKey(AllInStage.Limbs), -1);
+        var joints = 0;
+        for (var i = 0; i < RemainingJointBits.Length; i++)
+            if ((selected & (1 << i)) != 0)
+                joints |= 1 << RemainingJointBits[i];
         var progress = 0f;
         var log = RunAllInNode("Limbs", IsAllInStageEnabled(AllInStage.Limbs), () =>
         {

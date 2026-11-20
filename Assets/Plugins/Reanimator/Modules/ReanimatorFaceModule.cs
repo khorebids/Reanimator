@@ -14,10 +14,21 @@ internal sealed partial class ReanimatorFaceModule : ReanimatorToolModeModule, I
 
     public void HandlePreviewInput(Reanimator.SystemApi api, ReanimatorPreviewContext context)
     {
+        if (api?.ActiveFaceSubtoolIndex != 1 || api.PreviewRenderer == null ||
+            !api.PreviewRenderer.HandleFaceMouthInput(context, out var error))
+            return;
+        if (error != null)
+            api.ShowNotification(error);
+        api.Repaint();
     }
 
     public void DrawPreviewOverlay(Reanimator.SystemApi api, ReanimatorPreviewContext context)
     {
+        if (api?.ActiveFaceSubtoolIndex == 1)
+        {
+            api.PreviewRenderer?.DrawFaceMouthContours(context?.Coordinates);
+            return;
+        }
         if (api == null || api.ActiveFaceSubtoolIndex != 0 || context == null || context.Coordinates == null)
             return;
         if (Event.current != null && Event.current.type != EventType.Repaint)

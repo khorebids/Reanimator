@@ -176,6 +176,64 @@ public partial class PsdLayerPreviewRenderer
         return true;
     }
 
+    private void DrawShoulderHelperPreview(PsdCoordinateSpace coordinates)
+    {
+        if (Event.current.type != EventType.Repaint || coordinates == null ||
+            !TryGetBoneParent(selectedBoneIndex, out var child, out _, out var parent))
+            return;
+
+        var direction = GetShoulderHelperDirection(
+            parent.worldRotation * Vector3.right, child.worldRotation * Vector3.right);
+        var length = Mathf.Max(1f, ShoulderReferenceWidth * ShoulderFanDepth);
+        var origin = GetBoneBasePoint(child);
+        Vector3 start = coordinates.DocumentToView(origin);
+        Vector3 end = coordinates.DocumentToView(origin + direction * length);
+        var screenDirection = (end - start).normalized;
+        var normal = new Vector3(-screenDirection.y, screenDirection.x);
+        var shoulder = Vector3.Lerp(start, end, 0.2f);
+        var width = Mathf.Min(7f, Vector3.Distance(start, end) * 0.15f);
+        var outline = new[] { start, shoulder + normal * width, end, shoulder - normal * width, start };
+
+        Handles.BeginGUI();
+        using (new Handles.DrawingScope(new Color(1f, 0.72f, 0.18f)))
+        {
+            Handles.DrawAAPolyLine(3f, outline);
+            Handles.DrawSolidDisc(start, Vector3.forward, 4f);
+            Handles.DrawSolidDisc(end, Vector3.forward, 3f);
+        }
+        Handles.EndGUI();
+        DrawShoulderFan(coordinates);
+    }
+
+    internal static Vector2 GetShoulderHelperDirection(Vector2 parentDirection, Vector2 childDirection)
+    {
+        var bisector = -(parentDirection.normalized + childDirection.normalized);
+        if (bisector.sqrMagnitude < 1e-6f)
+            bisector = new Vector2(-childDirection.y, childDirection.x);
+        return bisector.normalized;
+    }
+
+    internal static bool TryGetLimbCrossSection(Vector2[] vertices, int[] triangles, int[] boundary,
+        Vector2 joint, Vector2 incoming, Vector2 outgoing, out Vector2 start, out Vector2 end)
+    {
+        start = end = default;
+        if (vertices == null || triangles == null ||
+            !TryFindContainingTriangle(triangles, vertices, joint, out _, out _, out _, out _,
+                out _, out _, out _, out _))
+            return false;
+
+        // Use the normal to the average chain direction through the joint.
+        var tangent = incoming.normalized + outgoing.normalized;
+        if (tangent.sqrMagnitude < 1e-6f)
+            tangent = outgoing;
+        if (tangent.sqrMagnitude < 1e-6f)
+            return false;
+
+        var normalAngle = Mathf.Atan2(tangent.y, tangent.x) + Mathf.PI * 0.5f;
+        return TryGetNearestContourRayIntersection(vertices, boundary, joint, normalAngle, out start) &&
+            TryGetNearestContourRayIntersection(vertices, boundary, joint, normalAngle + Mathf.PI, out end);
+    }
+
     private bool DrawLimbBonePreview(PsdCoordinateSpace coordinates, float alpha, int child, bool useCull, float radius, bool removeInner)
     {
         if (Event.current.type != EventType.Repaint ||

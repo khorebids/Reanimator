@@ -30,6 +30,7 @@ public partial class PsdLayerPreviewRenderer
         public bool visible;
         public Vector2 worldPosition;
         public Quaternion worldRotation;
+        [NonSerialized] public Vector3 previewScale = Vector3.one;
     }
 
     private static void EnsureVertexBuffer(ref Vector3[] buffer, int size)

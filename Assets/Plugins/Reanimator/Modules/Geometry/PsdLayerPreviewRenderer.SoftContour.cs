@@ -155,13 +155,25 @@ public partial class PsdLayerPreviewRenderer
             (SoftContourAutoMode ? !CanApplyAutoSoftContour : softContourPairs.Count != selectedSoftContourPoints.Count))
             return false;
 
-        int source = FindSpriteBoneIndexForRendererBone(data, selectedBoneIndex);
+        if (!ApplySoftContourPairs(data, selectedBoneIndex, softContourPairs, out message, inheritParentOrder: !SoftContourHipsMode))
+            return false;
+        selectedSoftContourPoints.Clear();
+        softContourPairs.Clear();
+        SelectingSoftContourPoints = false;
+        return true;
+    }
+
+    private bool ApplySoftContourPairs(LayerVertexData data, int parentIndex,
+        IReadOnlyList<(Vector2 contour, Vector2 support, bool soften)> pairs, out string message, bool inheritParentOrder = true)
+    {
+        message = "SC requires a weighted source bone.";
+        int source = FindSpriteBoneIndexForRendererBone(data, parentIndex);
         if (source < 0) return false;
         var staged = CloneProjectorLayerData(data);
         var contourIndices = new HashSet<int>();
         var softenedIndices = new HashSet<int>();
         var supportIndices = new HashSet<int>();
-        foreach (var pair in softContourPairs)
+        foreach (var pair in pairs)
         {
             int contour = InsertOrFind(pair.contour);
             int support = InsertOrFind(pair.support);
@@ -180,9 +192,9 @@ public partial class PsdLayerPreviewRenderer
             return false;
         }
 
-        var parent = bones[selectedBoneIndex];
+        var parent = bones[parentIndex];
         string name = parent.name + "_SC";
-        int childIndex = bones.FindIndex(bone => bone.parentId == selectedBoneIndex && bone.name == name);
+        int childIndex = bones.FindIndex(bone => bone.parentId == parentIndex && bone.name == name);
         bool addBone = childIndex < 0;
         RegisterUndo("Apply Soft Contour");
         if (addBone)
@@ -194,13 +206,13 @@ public partial class PsdLayerPreviewRenderer
             {
                 index = childIndex,
                 name = name,
-                parentId = selectedBoneIndex,
+                parentId = parentIndex,
                 position = position,
                 initialPosition = position,
                 rotation = rotation,
                 initialRotation = rotation,
                 length = Mathf.Max(0.5f, parent.length / 3f),
-                depth = childIndex,
+                depth = inheritParentOrder ? parent.depth : childIndex,
                 color = CreateDefaultBoneColor(childIndex),
                 visible = true
             });
@@ -214,13 +226,19 @@ public partial class PsdLayerPreviewRenderer
             message = "SC could not bind the generated bone to the selected sprite.";
             return false;
         }
-        source = FindSpriteBoneIndexForRendererBone(staged, selectedBoneIndex);
+        if (inheritParentOrder)
+        {
+            bones[childIndex].depth = parent.depth;
+            boneOrderVersion++;
+        }
+        source = FindSpriteBoneIndexForRendererBone(staged, parentIndex);
         foreach (int index in supportIndices)
-            staged.boneWeights[index] = new BoneWeight { boneIndex0 = source, weight0 = 1f };
+            staged.boneWeights[index] = RedistributeSoftContourWeight(staged.boneWeights[index], source, child, 0f);
         foreach (int index in contourIndices)
-            staged.boneWeights[index] = softenedIndices.Contains(index)
-                ? new BoneWeight { boneIndex0 = child, weight0 = 0.5f, boneIndex1 = source, weight1 = 0.5f }
-                : new BoneWeight { boneIndex0 = child, weight0 = 1f };
+            staged.boneWeights[index] = RedistributeSoftContourWeight(staged.boneWeights[index], source, child,
+                softenedIndices.Contains(index) ? .5f : 1f);
+
+        SmoothSoftContourEnds(staged, softenedIndices, supportIndices, source, child);
 
         data.vertices = staged.vertices;
         data.vertexUvs = staged.vertexUvs;
@@ -234,10 +252,7 @@ public partial class PsdLayerPreviewRenderer
         BuildBoneDrawOrder();
         MarkBoneStateChanged();
         MarkSkinningWeightsChanged(data);
-        MarkEditGeometryDataChanged(data, selectedLayerSelectionKey, BuildKey(data.layer.name, data.layer.layerId));
-        selectedSoftContourPoints.Clear();
-        softContourPairs.Clear();
-        SelectingSoftContourPoints = false;
+        MarkEditGeometryDataChanged(data, BuildSelectionKey(data.layer), BuildKey(data.layer.name, data.layer.layerId));
         message = $"SC: {name}, {contourIndices.Count} contour and {supportIndices.Count} support points.";
         return true;
 
@@ -248,6 +263,58 @@ public partial class PsdLayerPreviewRenderer
             int index = staged.vertices.Length;
             return InsertAppliedVertexIntoLayerData(staged, point, true) &&
                 System.Array.IndexOf(staged.triangles, index) >= 0 ? index : -1;
+        }
+    }
+
+    // SC owns only the source/SC share. Joint helpers and adjacent segments
+    // already describe the bent surface and must survive both rows and smoothing.
+    internal static BoneWeight RedistributeSoftContourWeight(BoneWeight weight, int source, int child, float fraction)
+    {
+        float budget = GetSpriteBoneWeight(weight, source) + GetSpriteBoneWeight(weight, child);
+        if (budget <= 0f) return weight;
+        var values = new Dictionary<int, float>();
+        Add(weight.boneIndex0, weight.weight0); Add(weight.boneIndex1, weight.weight1);
+        Add(weight.boneIndex2, weight.weight2); Add(weight.boneIndex3, weight.weight3);
+        fraction = Mathf.Clamp01(fraction);
+        AccumulateWeightChannel(values, source, budget * (1 - fraction));
+        AccumulateWeightChannel(values, child, budget * fraction);
+        // Unity BoneWeight has four channels. Do not discard an existing joint
+        // influence just to add a fifth channel for endpoint softening.
+        if (values.Count > 4) return weight;
+        return BuildVertexFixWeight(values);
+
+        void Add(int bone, float value)
+        {
+            if (bone != source && bone != child) AccumulateWeightChannel(values, bone, value);
+        }
+    }
+
+    private static void SmoothSoftContourEnds(LayerVertexData data, HashSet<int> ends, HashSet<int> supports, int source, int child)
+    {
+        if (ends.Count == 0)
+            return;
+        // Select only the immediate contour neighbors, never the inward supports
+        // or a second ring reached through another selected endpoint.
+        var selected = new HashSet<int>(ends);
+        BuildEdgePairs(data.triangles, data.vertices.Length, out _, out var boundary);
+        for (var i = 0; i + 1 < boundary.Length; i += 2)
+        {
+            var a = boundary[i];
+            var b = boundary[i + 1];
+            if (ends.Contains(a) && !supports.Contains(b)) selected.Add(b);
+            if (ends.Contains(b) && !supports.Contains(a)) selected.Add(a);
+        }
+        selected.ExceptWith(supports);
+        // The shared smoother reads one snapshot, keeping both endpoint results
+        // independent of traversal order and of each other's updated weights.
+        var original = (BoneWeight[])data.boneWeights.Clone();
+        SmoothFullBoobRingWeights(data, new List<int>(selected), 0.5f);
+        foreach (int index in selected)
+        {
+            var smoothed = data.boneWeights[index];
+            float budget = GetSpriteBoneWeight(smoothed, source) + GetSpriteBoneWeight(smoothed, child);
+            data.boneWeights[index] = RedistributeSoftContourWeight(original[index], source, child,
+                budget > 0f ? GetSpriteBoneWeight(smoothed, child) / budget : 0f);
         }
     }
 
@@ -339,20 +406,23 @@ public partial class PsdLayerPreviewRenderer
     }
 
     private bool ProcessSoftContour(PsdCoordinateSpace coordinates, bool selectPoint,
-        Rect? selectionRectangle = null, bool extendSelection = false, bool draw = true)
+        Rect? selectionRectangle = null, bool extendSelection = false, bool draw = true, LayerVertexData maskedMesh = null,
+        int maskedBone = -1, Vector2[][] masks = null,
+        List<(Vector2 contour, Vector2 support, bool soften)> maskedPairs = null)
     {
-        if ((draw && coordinates == null) ||
+        var data = maskedMesh;
+        if (data == null && ((draw && coordinates == null) ||
             !HasSoftContourSelection() ||
-            !vertexDataByLayerSelectionKey.TryGetValue(selectedLayerSelectionKey, out var data) ||
-            data.layer == null || !data.layer.visible || data.triangles == null || data.boneWeights == null)
+            !vertexDataByLayerSelectionKey.TryGetValue(selectedLayerSelectionKey, out data) ||
+            data.layer == null || !data.layer.visible || data.triangles == null || data.boneWeights == null))
             return false;
 
-        int bone = FindSpriteBoneIndexForRendererBone(data, selectedBoneIndex);
-        if (bone < 0) return false;
+        int bone = FindSpriteBoneIndexForRendererBone(data, maskedMesh == null ? selectedBoneIndex : maskedBone);
+        if (bone < 0 || data.boneWeights == null) return false;
         var vertices = GetLayerVerticesForDraw(data);
         if (vertices == null || vertices.Length != data.boneWeights.Length) return false;
-        if (softContourSelectionLayer != data || softContourSelectionTriangles != data.triangles ||
-            softContourSelectionBone != selectedBoneIndex)
+        if (maskedMesh == null && (softContourSelectionLayer != data || softContourSelectionTriangles != data.triangles ||
+            softContourSelectionBone != selectedBoneIndex))
         {
             selectedSoftContourPoints.Clear();
             softContourSelectionLayer = data;
@@ -402,6 +472,35 @@ public partial class PsdLayerPreviewRenderer
                         }
                     }
                 }
+            }
+
+            if (maskedMesh != null)
+            {
+                if (!TryBuildBoundaryLoopFromPairs(data.boundaryEdgePairs, vertices.Length, out var loop))
+                    return false;
+
+                var eligible = new bool[loop.Count];
+                for (var i = 0; i < loop.Count; i++)
+                {
+                    var index = loop[i];
+                    eligible[i] = weights[index] > 0f && System.Array.Exists(masks,
+                        mask => mask != null && mask.Length >= 3 && ContainsFaceMouthPoint(vertices[index], mask));
+                }
+
+                for (var i = 0; i < loop.Count; i++)
+                {
+                    if (!eligible[i])
+                        continue;
+                    var index = loop[i];
+                    var contour = vertices[index];
+                    if (!TryGetSoftContourSupport(contour, segments, SoftContourDepth, out var support) &&
+                        !TryGetAutoSoftContourInteriorSupport(index, vertices, data.triangles, out support))
+                        continue;
+                    bool endpoint = !eligible[(i + loop.Count - 1) % loop.Count] ||
+                        !eligible[(i + 1) % loop.Count];
+                    maskedPairs.Add((ConvertPointToBaseDoc(data, contour), ConvertPointToBaseDoc(data, support), endpoint));
+                }
+                return maskedPairs.Count > 0;
             }
 
             if (SoftContourAutoMode)

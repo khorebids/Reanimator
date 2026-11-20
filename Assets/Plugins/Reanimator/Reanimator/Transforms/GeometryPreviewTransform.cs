@@ -202,7 +202,7 @@ internal static class ReanimatorSkinningAlgorithms
             var boneMatrix = Matrix4x4.TRS(
                 new Vector3(bonePosition.x, bonePosition.y, 0f),
                 NormalizeRotation(bone.worldRotation),
-                Vector3.one);
+                bone.previewScale);
             skinMatrices[i] = boneMatrix * bindBoneInverseMatrices[i];
         }
     }

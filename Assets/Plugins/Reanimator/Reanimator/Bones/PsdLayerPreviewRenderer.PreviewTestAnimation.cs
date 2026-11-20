@@ -14,7 +14,7 @@ public partial class PsdLayerPreviewRenderer
     [SerializeField] private AnimationCurve previewTestAnimCurve;
 
     [NonSerialized] private bool previewTestAnimApplied;
-    [NonSerialized] private readonly List<Quaternion> previewTestAnimSavedRotations = new List<Quaternion>();
+    [NonSerialized] private List<Quaternion> previewTestAnimSavedRotations = new List<Quaternion>();
     [NonSerialized] private float previewTestAnimLastSample = float.NaN;
     [NonSerialized] private PreviewTestAnimMode previewTestAnimLastMode;
     [NonSerialized] private float previewTestAnimLastCyclicDepthOffset = float.NaN;

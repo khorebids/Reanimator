@@ -372,7 +372,7 @@ internal static partial class ReanimatorSelfTests
         AssertEqual(
             0,
             offenders.Count,
-            "Production Reanimator modules should use sprites from Graphics/icons.psd. Offenders: " + string.Join(", ", offenders));
+            "Production Reanimator modules should use sprites from Graphics/icons.png. Offenders: " + string.Join(", ", offenders));
 
         AssertEqual(
             "Edit bones",
@@ -386,21 +386,50 @@ internal static partial class ReanimatorSelfTests
 
     private static void ReleaseUiIconSheetUsesCurrentPsdImporterMetadata()
     {
-        var metaPath = Path.Combine(
-            Application.dataPath,
-            "Plugins/Reanimator/Graphics/icons.psd.meta");
-        AssertTrue(File.Exists(metaPath), "Reanimator icon sheet meta should exist.");
+        const string path = "Assets/Plugins/Reanimator/Graphics/icons.png";
+        var importer = AssetImporter.GetAtPath(path) as TextureImporter;
+        AssertTrue(importer != null && importer.spriteImportMode == SpriteImportMode.Multiple, "PNG icons should be imported as multiple sprites.");
+        var sprites = AssetDatabase.LoadAllAssetsAtPath(path).OfType<Sprite>().ToArray();
+        AssertEqual(49, sprites.Length, "The icon sheet must contain a complete 7x7 grid.");
+        var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+        AssertTrue(sprites.Sum(sprite => sprite.rect.width * sprite.rect.height) < texture.width * texture.height, "Icon sprites should have their transparent grid margins trimmed.");
+        foreach (var sprite in sprites)
+            AssertTrue(sprite.rect.width <= Mathf.Ceil(texture.width / 7f) && sprite.rect.height <= Mathf.Ceil(texture.height / 7f), "Each trimmed icon must remain within its original grid cell.");
+    }
 
-        var meta = File.ReadAllText(metaPath);
-        AssertTrue(
-            meta.Contains("  layeredSpriteImportData:"),
-            "Reanimator icon sheet should use layeredSpriteImportData so PSD layer mapping survives reimport.");
-        AssertTrue(
-            meta.Contains("  psdLayers:"),
-            "Reanimator icon sheet should persist PSD layer IDs in psdLayers to avoid duplicate LayerId fallback warnings.");
-        AssertTrue(
-            meta.Contains("  rigPSDLayers:"),
-            "Reanimator icon sheet should keep rigPSDLayers for Unity importer compatibility.");
+    private static void SkeletronAdditionalLimbPlacement()
+    {
+        var flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+        var type = typeof(ReanimatorSkeletronModule);
+        var bounds = new Rect(100f, 100f, 400f, 600f);
+        var points = (Vector2[])type.GetMethod("BuildPoints", flags).Invoke(null, new object[] { bounds });
+        foreach (var arms in new[] { false, true })
+        foreach (var legs in new[] { false, true })
+        {
+            var specs = (List<(string name, int parent, Vector2 start, Vector2 end)>)type.GetMethod("BuildBoneSpecs", flags)
+                .Invoke(null, new object[] { points, new Rect(0, 0, 1000, 1000), arms, legs });
+            AssertEqual(18 + (arms ? 6 : 0) + (legs ? 6 : 0), specs.Count, "Only enabled additional limbs should be applied.");
+            AssertEqual(specs.Count, specs.Select(bone => bone.name).Distinct().Count(), "Bone names must remain unique.");
+            foreach (var bone in specs)
+                AssertTrue(bone.parent < specs.FindIndex(candidate => candidate.name == bone.name), "Parents must precede children.");
+            if (arms)
+            {
+                var arm = specs.First(bone => bone.name == "l_arm_2");
+                AssertEqual("spine", specs[arm.parent].name, "Additional arms must attach to the spine.");
+            }
+            if (legs)
+            {
+                var leg = specs.First(bone => bone.name == "r_leg_2");
+                AssertEqual("hips", specs[leg.parent].name, "Additional legs must attach to the hips.");
+            }
+        }
+        for (var limb = 0; limb < 4; limb++)
+        for (var joint = 0; joint < 4; joint++)
+        {
+            var delta = points[22 + limb * 4 + joint] - points[6 + limb * 4 + joint];
+            AssertEqual(limb % 2 == 0 ? -28f : 28f, delta.x, "Additional limbs must shift outward with placement width.");
+            AssertEqual(0f, delta.y, "Additional limbs must retain the original vertical pose.");
+        }
     }
 
     private static void NamingIndicatorLoadsCurrentPsdImporterMetadata()
@@ -426,19 +455,30 @@ internal static partial class ReanimatorSelfTests
             var parts = (System.Collections.ICollection)InvokePrivateMethod(window, "GetNamingIndicatorParts");
             var canvasRect = (Rect)canvasField.GetValue(null);
 
-            AssertTrue(parts != null && parts.Count >= 18, "Naming indicator should include the two generated second-arm parts.");
+            AssertTrue(parts != null && parts.Count == 19, "Naming indicator should include all current PSD parts without duplicate fallback arms.");
             AssertTrue(canvasRect.width > 0f && canvasRect.height > 0f, "Naming indicator canvas bounds should be built from loaded parts.");
             var generatedParts = parts.Cast<object>().ToList();
             var leftArm2 = generatedParts.FirstOrDefault(part => GetPrivateField<string>(part, "Name") == "l_arm_2");
             var rightArm2 = generatedParts.FirstOrDefault(part => GetPrivateField<string>(part, "Name") == "r_arm_2");
-            AssertTrue(leftArm2 != null && rightArm2 != null, "Naming indicator should generate l_arm_2 and r_arm_2 from the base arm sprites.");
-            AssertEqual(45f, GetPrivateField<float>(leftArm2, "RotationDegrees"), "Second left arm should rotate upward by 45 degrees.");
-            AssertEqual(-45f, GetPrivateField<float>(rightArm2, "RotationDegrees"), "Second right arm should rotate upward by 45 degrees.");
+            AssertTrue(leftArm2 != null && rightArm2 != null, "Naming indicator should map authored second arms to l_arm_2 and r_arm_2.");
+            AssertEqual(0f, GetPrivateField<float>(leftArm2, "RotationDegrees"), "Authored second left arm must retain its PSD pose.");
+            AssertEqual(0f, GetPrivateField<float>(rightArm2, "RotationDegrees"), "Authored second right arm must retain its PSD pose.");
+            AssertEqual("l_arm2", GetPrivateField<Sprite>(leftArm2, "Sprite").name, "Second arm must use the current authored PSD sprite.");
+            InvokePrivateMethod(window, "OnProjectChange");
+            AssertTrue(partsField.GetValue(null) == null, "PSD project changes must invalidate the template cache.");
+            var refreshedParts = (System.Collections.ICollection)InvokePrivateMethod(window, "GetNamingIndicatorParts");
+            AssertEqual(parts.Count, refreshedParts.Count, "Reloading the current template must preserve all parts without adding fallback duplicates.");
 
             var onePairNames = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase) { "l_arm", "r_arm" };
-            AssertFalse(
+            AssertTrue(
                 (bool)InvokePrivateMethod(window, "ShouldShowNamingIndicatorPart", "l_arm_2", onePairNames),
-                "Second-arm graphics should stay hidden for ordinary one-pair characters.");
+                "Second-arm graphics should remain visible for ordinary one-pair characters.");
+            foreach (var optional in new[] { "l_arm_2", "r_arm_2", "l_leg2", "r_leg2", "lock1", "lock2", "l_boob", "r_boob" })
+            {
+                AssertTrue((bool)InvokePrivateMethod(window, "IsNamingIndicatorSecondaryPart", optional), "Optional part must have secondary priority: " + optional);
+                AssertFalse((bool)InvokePrivateMethod(window, "IsNamingIndicatorPartProblem", optional, onePairNames, null), "Missing optional parts must not be red: " + optional);
+            }
+            AssertTrue((bool)InvokePrivateMethod(window, "IsNamingIndicatorPartProblem", "head", onePairNames, null), "Missing primary parts must remain red.");
             onePairNames.Add("l_arm_2");
             AssertTrue(
                 (bool)InvokePrivateMethod(window, "ShouldShowNamingIndicatorPart", "r_arm_2", onePairNames),

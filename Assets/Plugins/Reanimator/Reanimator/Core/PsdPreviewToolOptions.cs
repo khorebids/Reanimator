@@ -3,8 +3,10 @@ public sealed class PsdPreviewToolOptions
 {
     public bool AutoGeometry;
     public bool Elbow;
+    public bool ElbowCorrective;
     public bool Limb;
     public bool LimbBone;
+    public bool LimbCrossSection;
     public int LimbBoneChild;
     public bool LimbBoneCull;
     public bool Boob;
@@ -22,8 +24,10 @@ public sealed class PsdPreviewToolOptions
     {
         AutoGeometry = false;
         Elbow = false;
+        ElbowCorrective = false;
         Limb = false;
         LimbBone = false;
+        LimbCrossSection = false;
         LimbBoneChild = -1;
         LimbBoneCull = false;
         Boob = false;

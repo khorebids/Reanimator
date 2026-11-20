@@ -68,6 +68,7 @@ public partial class PsdLayerPreviewRenderer
 
     public bool CancelLimbsTool()
     {
+        CancelShoulderOutline();
         var changed = false;
         if ((limbLines != null && limbLines.Count > 0) ||
             limbIsCreating ||
@@ -115,7 +116,7 @@ public partial class PsdLayerPreviewRenderer
 
     public bool CancelBoobTool()
     {
-        var changed = boobHasPoint || !string.IsNullOrEmpty(boobLayerStableKey) ||
+        var changed = HasSideAssContour || SideAssDrawing || boobHasPoint || !string.IsNullOrEmpty(boobLayerStableKey) ||
                       boobV2HasTargetA || boobV2HasTargetB ||
                       boobV2ContourADoc.Count > 0 || boobV2ContourBDoc.Count > 0 ||
                       !string.IsNullOrEmpty(boobV2LayerStableKey);
@@ -123,6 +124,7 @@ public partial class PsdLayerPreviewRenderer
             RegisterUndo("Cancel Boob Tool");
         ClearBoobPoint();
         ClearBoobV2();
+        ClearSideAssContour();
         return changed;
     }
 

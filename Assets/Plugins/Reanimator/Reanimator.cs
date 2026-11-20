@@ -25,7 +25,9 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
         Skel = 0,
         Sprite = 1,
         Comfimator = 2,
-        AllInGraph = 3
+        AllInGraph = 3,
+        Reanimate = 4,
+        SurfaceMasks = 5
     }
 
     private enum VisibilityElement
@@ -259,6 +261,7 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
     [SerializeField] private int curveSpaceMode;
     [SerializeField] private bool limbsUseRadiusCull = true;
     [SerializeField] private bool limbsBoneMode;
+    [SerializeField] private bool limbsCrossSectionMode;
     private int limbsChildBoneIndex = -1;
     [SerializeField] private bool jointUseRadiusCull = true;
     [SerializeField, Range(0, 1)] private int jointAlgorithmMode;
@@ -274,7 +277,7 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
     [SerializeField, Range(0, 10)] private int jointLongPoints = 4;
     [SerializeField] private float analizeCurveGraphHeight = 180f;
     [SerializeField] private ReanimatorToolMode bottomToolMode = ReanimatorToolMode.PreviewPose;
-    [SerializeField] private PreviewMode previewMode = PreviewMode.Skel;
+    [SerializeField] private PreviewMode previewMode = PreviewMode.Reanimate;
     [SerializeField] private bool spriteSheetGeometryMode;
     [SerializeField] private int spritePivotUnitMode;
     private double lastAutoGeometryHotkeyTime;
@@ -284,7 +287,7 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
     private readonly ReanimatorMissingGeometryScanState missingGeometryScanState = new ReanimatorMissingGeometryScanState();
 
     private static readonly string[] WeightModes = { "AddAndSubtract", "Add", "Subtract", "Replace" };
-    internal static readonly string[] FaceSubtoolLabels = { "Eyes", "Mouth", "Earrings" };
+    internal static readonly string[] FaceSubtoolLabels = { "Eyes", "Breathing & Talking" };
     private static readonly string[] PivotPresetLabels =
     {
         "Center",
@@ -338,6 +341,7 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
     public static void Open()
     {
         var window = GetWindow<Reanimator>(WindowTitle);
+        window.SetPreviewMode(PreviewMode.Reanimate);
         window.ApplyWindowTitle();
         window.Repaint();
     }
@@ -364,6 +368,7 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
             window.layerPreviewRenderer?.MarkDirty();
         }
 
+        window.SetPreviewMode(PreviewMode.Reanimate);
         window.ApplyWindowTitle();
         window.Focus();
         window.Repaint();
@@ -371,6 +376,11 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
 
     private void OnEnable()
     {
+        if (reanimateStepLayoutVersion < 1)
+        {
+            if (reanimateStep >= 10) reanimateStep--;
+            reanimateStepLayoutVersion = 1;
+        }
         lastUserActivityTime = EditorApplication.timeSinceStartup;
         wantsMouseEnterLeaveWindow = true;
         UpdateWindowEventOptions();
@@ -385,6 +395,7 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
         EnsurePreviewNavigators();
         if (layerPreviewRenderer == null)
             layerPreviewRenderer = new PsdLayerPreviewRenderer();
+        layerPreviewRenderer.EnsureRuntimeState();
         LoadLimbsSettingsPreference();
         layerPreviewRenderer.BoneInfluenceOverlay = influenceVisibilityValue;
         if (string.IsNullOrWhiteSpace(activeAssetPath))
@@ -447,6 +458,7 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
 
     private void OnDisable()
     {
+        if (surfaceMaskPainter) { DestroyImmediate(surfaceMaskPainter); surfaceMaskPainter = null; }
         SaveFaceEyesWeightCurvePreference();
         SaveLimbsSettingsPreference();
         StoreActivePreviewNavigator();
@@ -640,6 +652,9 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
 
     private void OnLostFocus()
     {
+        clearTextFocusOnNextGUI = true;
+        CommitTextFieldEdit();
+        CommitBoneRename();
         layerPreviewRenderer?.FlushPendingBoneAutosave();
         layerPreviewRenderer?.StopPreviewTestAnimation();
         UpdateWindowEventOptions();
@@ -710,7 +725,7 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
         if (isApplyingChanges)
             return;
 
-        InvalidateNamingIndicatorCaches(false);
+        InvalidateNamingIndicatorCaches(true);
 
         if (layerPreviewRenderer != null && layerPreviewRenderer.HasPendingChanges)
         {
@@ -727,12 +742,104 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
 
     private void OnGUI()
     {
-        TrackReanimatorUserActivity(Event.current);
+        if (clearTextFocusOnNextGUI)
+        {
+            clearTextFocusOnNextGUI = false;
+            GUIUtility.keyboardControl = 0;
+            EditorGUIUtility.editingTextField = false;
+        }
+
+        var input = Event.current;
+        HandleReanimateSuccessNotificationInput(input);
+        var inputType = input.rawType;
+        var inputKey = input.keyCode;
+        textFieldEditDrawn = false;
+        textFieldEditClicked = false;
+        TrackReanimatorUserActivity(input);
         UpdateWindowEventOptions();
         HandleDepthDragLifecycle();
-        HandlePreviewCameraHotkeys();
-        HandleToolHotkeys();
+        if (previewMode == PreviewMode.Reanimate)
+            HandleReanimateStepKeys(input);
+        else
+        {
+            HandlePreviewCameraHotkeys();
+            HandleToolHotkeys();
+        }
         DrawTestTab();
+        DrawReanimateSuccessNotification();
+        FinishTextFieldEdit(inputType, inputKey);
+    }
+
+    private bool clearTextFocusOnNextGUI;
+    private int textFieldKeyboardControl;
+    private string textFieldEditControl;
+    private string textFieldEditValue;
+    private System.Action<string> textFieldEditApply;
+    private bool textFieldEditDrawn;
+    private bool textFieldEditClicked;
+
+    private void DrawCommitTextField(Rect rect, GUIContent label, string control, string value, System.Action<string> apply)
+    {
+        var input = Event.current;
+        var clicked = input.rawType == EventType.MouseDown && rect.Contains(input.mousePosition);
+        GUI.SetNextControlName(control);
+        var draft = textFieldEditControl == control && textFieldEditApply != null ? textFieldEditValue : value;
+        var edited = EditorGUI.TextField(rect, label, draft);
+        if (edited != draft || GUI.GetNameOfFocusedControl() == control)
+        {
+            if (textFieldEditControl != control)
+                CommitTextFieldEdit();
+            textFieldEditControl = control;
+            if (GUI.GetNameOfFocusedControl() == control)
+                textFieldKeyboardControl = GUIUtility.keyboardControl;
+            if (edited != draft)
+            {
+                textFieldEditValue = edited;
+                textFieldEditApply = apply;
+            }
+        }
+
+        if (textFieldEditControl == control)
+        {
+            textFieldEditDrawn = true;
+            textFieldEditClicked = clicked;
+        }
+    }
+
+    private void FinishTextFieldEdit(EventType inputType, KeyCode key)
+    {
+        if (textFieldEditControl == null)
+            return;
+
+        var enter = inputType == EventType.KeyDown && (key == KeyCode.Return || key == KeyCode.KeypadEnter);
+        var escape = inputType == EventType.KeyDown && key == KeyCode.Escape;
+        var tab = inputType == EventType.KeyDown && key == KeyCode.Tab;
+        var focused = textFieldKeyboardControl != 0 && GUIUtility.keyboardControl == textFieldKeyboardControl;
+        var clickedAway = inputType == EventType.MouseDown && !textFieldEditClicked;
+        if (clickedAway || enter || escape || tab || (inputType == EventType.Repaint && !textFieldEditDrawn))
+        {
+            if (focused && !tab)
+            {
+                GUIUtility.keyboardControl = 0;
+                EditorGUIUtility.editingTextField = false;
+            }
+            CommitTextFieldEdit(cancel: escape);
+        }
+    }
+
+    private void CommitTextFieldEdit(bool cancel = false)
+    {
+        var apply = textFieldEditApply;
+        var value = textFieldEditValue;
+        textFieldEditControl = null;
+        textFieldKeyboardControl = 0;
+        textFieldEditValue = null;
+        textFieldEditApply = null;
+        if (apply == null)
+            return;
+        if (!cancel)
+            apply(value);
+        Repaint();
     }
 
     private void TrackReanimatorUserActivity(Event e)
@@ -770,7 +877,8 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
     private void UpdateWindowEventOptions()
     {
         wantsMouseEnterLeaveWindow = true;
-        wantsMouseMove = IsReanimatorInteractionActive() || IsBoneSelectionHoverPreviewActive();
+        wantsMouseMove = IsReanimatorInteractionActive() || IsBoneSelectionHoverPreviewActive() ||
+                         previewMode == PreviewMode.Reanimate || previewMode == PreviewMode.SurfaceMasks;
     }
 
     private bool ShouldRunContinuousPreviewUpdates()
@@ -829,6 +937,8 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
 
     private void HandleEditorUpdate()
     {
+        TickReanimateChallengeTimer();
+        TickReanimateSuccessNotification();
         if (layerPreviewRenderer == null)
             return;
         if (!IsReanimatorWindowAttended())
@@ -881,6 +991,8 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
             autoGeometryHotkeyIsDown = false;
             return;
         }
+        if (previewMode == PreviewMode.Reanimate)
+            return;
 
         if (!ReanimatorHotkeyAlgorithms.ShouldHandleToolHotkeyEvent(
                 e,
@@ -924,6 +1036,8 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
 
     private void HandlePreviewCameraHotkeys()
     {
+        if (previewMode == PreviewMode.Reanimate)
+            return;
         var e = Event.current;
         if (!ReanimatorHotkeyAlgorithms.ShouldHandlePreviewCameraPanEvent(
                 e,

@@ -523,7 +523,7 @@ public partial class PsdLayerPreviewRenderer
         return null;
     }
 
-    private LayerInfo FindTopLayerAt(Vector2 mouseDoc, IReadOnlyList<LayerInfo> drawList)
+    internal LayerInfo FindTopLayerAt(Vector2 mouseDoc, IReadOnlyList<LayerInfo> drawList, ISet<LayerInfo> excluded = null)
     {
         if (drawList == null)
             return null;
@@ -531,7 +531,7 @@ public partial class PsdLayerPreviewRenderer
         for (var i = drawList.Count - 1; i >= 0; i--)
         {
             var layer = drawList[i];
-            if (layer == null || !layer.visible)
+            if (layer == null || !layer.visible || excluded?.Contains(layer) == true)
                 continue;
             if (!IsPointInsideLayer(layer, mouseDoc))
                 continue;

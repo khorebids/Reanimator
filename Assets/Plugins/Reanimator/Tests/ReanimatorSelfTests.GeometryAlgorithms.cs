@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,6 +9,271 @@ using UnityEngine.U2D.Animation;
 
 internal static partial class ReanimatorSelfTests
 {
+    private static void SrnRootBlendsSelectedSourceAndLeavesLaterBonesAlone()
+    {
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+        var method = typeof(PsdLayerPreviewRenderer).GetMethod("SmoothOtherChainRootWeight", flags);
+        var joints = new[] { Vector2.zero, Vector2.right * 10f, Vector2.right * 20f };
+        var first = new BoneWeight { boneIndex0 = 1, weight0 = 1f };
+        var root = (BoneWeight)method.Invoke(null, new object[] { Vector2.zero, joints, first, 1, 5 });
+        AssertFloat(1f, GetWeight(root, 5), .0001f, "SRN root must be fully anchored to the selected source.");
+        var middle = new BoneWeight { boneIndex0 = 1, weight0 = .5f, boneIndex1 = 2, weight1 = .5f };
+        var result = (BoneWeight)method.Invoke(null, new object[] { Vector2.right * 5f, joints, middle, 1, 5 });
+        AssertFloat(.25f, GetWeight(result, 5), .0001f, "Source must fade smoothly along the first bone.");
+        AssertFloat(.25f, GetWeight(result, 1), .0001f, "First SRN share must blend into the source.");
+        AssertFloat(.5f, GetWeight(result, 2), .0001f, "Later chain influences must remain unchanged.");
+        var later = new BoneWeight { boneIndex0 = 2, weight0 = 1f };
+        result = (BoneWeight)method.Invoke(null, new object[] { Vector2.right * 15f, joints, later, 1, 5 });
+        AssertFloat(1f, GetWeight(result, 2), .0001f, "Later bones must not acquire source weight.");
+        var draftType = typeof(Reanimator).GetNestedType("OtherSpriteDraft", System.Reflection.BindingFlags.NonPublic);
+        var draft = Activator.CreateInstance(draftType, true);
+        AssertTrue((bool)draftType.GetField("smoothRoot").GetValue(draft), "Root smoothing must default to enabled.");
+        AssertTrue(draftType.GetField("rootSourceBone").GetValue(draft)==null, "Default root source must follow the selected parent.");
+        var resolve=typeof(Reanimator).GetMethod("ResolveReanimateSrnRootSource",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic);
+        draftType.GetField("parentBone").SetValue(draft,"head");
+        draftType.GetField("rootSourceBone").SetValue(draft,"hips");
+        AssertTrue(resolve.Invoke(null,new[]{draft})==null,"Legacy implicit hips must follow the selected head parent.");
+        draftType.GetField("rootSourceExplicit").SetValue(draft,true);
+        AssertEqual("hips",(string)resolve.Invoke(null,new[]{draft}),"An explicit hips override must remain available.");
+        draftType.GetField("smoothRoot").SetValue(draft, false);
+        AssertFalse((bool)draftType.GetField("smoothRoot").GetValue(draft), "Root smoothing must be switchable off.");
+    }
+
+    private static void AutomaticWeightsPreserveManualBackHair()
+    {
+        var renderer = new PsdLayerPreviewRenderer();
+        SetPrivateField(renderer, "bones", new List<PsdLayerPreviewRenderer.BoneInfo> {
+            BuildVisibleWorldBone(0, "hips", -1, Vector2.zero) });
+        var data = CreatePrivateNestedInstance(renderer, "LayerVertexData");
+        SetPrivateField(data, "layer", BuildLayer("back_hair", 9877, Vector2.zero));
+        SetPrivateField(data, "vertices", new[] { Vector2.zero, Vector2.right, Vector2.up });
+        var weights = new[] { new BoneWeight { boneIndex0 = 0, weight0 = 1f },
+            new BoneWeight { boneIndex0 = 0, weight0 = 1f }, new BoneWeight { boneIndex0 = 0, weight0 = 1f } };
+        SetPrivateField(data, "boneWeights", weights);
+        SetPrivateField(data, "spriteBoneToRendererBone", new[] { 0 });
+        var cache = (System.Collections.IDictionary)GetPrivateField<object>(renderer, "vertexDataByLayerSelectionKey");
+        cache["back_hair"] = data;
+        renderer.ApplyDeterministicAutoWeightsToAllSprites();
+        AssertTrue(ReferenceEquals(weights, GetPrivateField<BoneWeight[]>(data, "boneWeights")),
+            "Global auto weights must not replace manual back hair weights.");
+        renderer.ApplyRiggedLimbAutoWeights(1 << 3, false);
+        AssertTrue(ReferenceEquals(weights, GetPrivateField<BoneWeight[]>(data, "boneWeights")),
+            "Back hair region must not invoke automatic weighting.");
+    }
+
+    private static void RetriangulationAcceptsRedundantGeneratedVertices()
+    {
+        var renderer = new PsdLayerPreviewRenderer();
+        var data = CreatePrivateNestedInstance(renderer, "LayerVertexData");
+        var vertices = new[] { new Vector2(1000,1500), new Vector2(1100,1500), new Vector2(1100,1600),
+            new Vector2(1000,1600), new Vector2(1050,1550), new Vector2(1050,1550) };
+        var uvs = vertices.Select(v => v * .001f).ToArray();
+        var weights = Enumerable.Repeat(new BoneWeight { boneIndex0 = 0, weight0 = 1f }, vertices.Length).ToArray();
+        SetPrivateField(data, "vertices", vertices);
+        SetPrivateField(data, "vertexUvs", uvs);
+        SetPrivateField(data, "boneWeights", weights);
+        SetPrivateField(data, "boundaryEdgePairs", new[] { 0,1, 1,2, 2,3, 3,0 });
+        AssertTrue((bool)InvokePrivateMethod(renderer, "TryRetriangulateWithDirectFallback", data),
+            "Generated duplicate points must not stop a recoverable rebuild.");
+        AssertTrue(ReferenceEquals(vertices, GetPrivateField<Vector2[]>(data, "vertices")), "Vertex identity must survive.");
+        AssertTrue(ReferenceEquals(uvs, GetPrivateField<Vector2[]>(data, "vertexUvs")), "UV identity must survive.");
+        AssertTrue(ReferenceEquals(weights, GetPrivateField<BoneWeight[]>(data, "boneWeights")), "Weights must survive.");
+    }
+
+    private static void ShoulderBandKeepsExactCutsAndRepeatsOnRegressionMesh()
+    {
+        // Body topology captured from the PSD that exposed interactive edge snapping.
+        var renderer = new PsdLayerPreviewRenderer();
+        var data = CreatePrivateNestedInstance(renderer, "LayerVertexData");
+        SetPrivateField(data, "layer", BuildLayer("body", 9822, Vector2.zero));
+        var vertices = new[] { new Vector2(786.5f, 725f), new Vector2(840.202f, 768.511963f), new Vector2(921.972f, 832.904f), new Vector2(944.5f, 854.254f), new Vector2(946.556f, 957.744f), new Vector2(945.728f, 1060.97192f), new Vector2(960.916f, 1161.52f), new Vector2(987.922f, 1259.602f), new Vector2(1023.828f, 1332.194f), new Vector2(1043f, 1377.682f), new Vector2(1043f, 1441f), new Vector2(955.218f, 1493.042f), new Vector2(864.6f, 1538.77808f), new Vector2(791.709961f, 1600.946f), new Vector2(729.438f, 1649.936f), new Vector2(736.374f, 1662.97192f), new Vector2(723.964f, 1747.536f), new Vector2(668.514038f, 1773f), new Vector2(615.914f, 1768.408f), new Vector2(611.4f, 1747.166f), new Vector2(592.008f, 1655.364f), new Vector2(537.394f, 1582.6f), new Vector2(519.188f, 1525.842f), new Vector2(519.442f, 1487.158f), new Vector2(545.108032f, 1414.866f), new Vector2(603.474f, 1314.682f), new Vector2(656.336f, 1226.91406f), new Vector2(684.042f, 1146.542f), new Vector2(620.641968f, 1065.334f), new Vector2(567.615967f, 974.228f), new Vector2(536.5f, 922.391968f), new Vector2(547.316f, 882.011963f), new Vector2(582.813965f, 828.65f), new Vector2(622.926f, 788.576f), new Vector2(685.044f, 746.732f), new Vector2(732.946f, 724.296f) };
+        SetPrivateField(data, "vertices", vertices);
+        SetPrivateField(data, "vertexUvs", new Vector2[vertices.Length]);
+        SetPrivateField(data, "boneWeights", Enumerable.Repeat(new BoneWeight { boneIndex0 = 0, weight0 = 1f }, vertices.Length).ToArray());
+        SetPrivateField(data, "triangles", new[] { 0, 35, 1, 1, 4, 2, 1, 28, 4, 1, 29, 28, 1, 33, 29, 1, 34, 33, 1, 35, 34, 2, 4, 3, 4, 27, 5, 4, 28, 27, 5, 27, 6, 6, 26, 7, 6, 27, 26, 7, 11, 8, 7, 12, 11, 7, 26, 12, 8, 11, 9, 9, 11, 10, 12, 25, 13, 12, 26, 25, 13, 21, 14, 13, 22, 21, 13, 23, 22, 13, 24, 23, 13, 25, 24, 14, 19, 15, 14, 20, 19, 14, 21, 20, 15, 19, 16, 16, 19, 17, 17, 19, 18, 29, 31, 30, 29, 32, 31, 29, 33, 32 });
+        SetPrivateField(data, "allEdgePairs", new[] { 0, 35, 35, 1, 1, 0, 1, 4, 4, 2, 2, 1, 1, 28, 28, 4, 1, 29, 29, 28, 1, 33, 33, 29, 1, 34, 34, 33, 35, 34, 4, 3, 3, 2, 4, 27, 27, 5, 5, 4, 28, 27, 27, 6, 6, 5, 6, 26, 26, 7, 7, 6, 27, 26, 7, 11, 11, 8, 8, 7, 7, 12, 12, 11, 26, 12, 11, 9, 9, 8, 11, 10, 10, 9, 12, 25, 25, 13, 13, 12, 26, 25, 13, 21, 21, 14, 14, 13, 13, 22, 22, 21, 13, 23, 23, 22, 13, 24, 24, 23, 25, 24, 14, 19, 19, 15, 15, 14, 14, 20, 20, 19, 21, 20, 19, 16, 16, 15, 19, 17, 17, 16, 19, 18, 18, 17, 29, 31, 31, 30, 30, 29, 29, 32, 32, 31, 33, 32 });
+        SetPrivateField(data, "boundaryEdgePairs", new[] { 0, 35, 0, 1, 1, 2, 28, 29, 33, 34, 34, 35, 3, 4, 2, 3, 4, 5, 27, 28, 5, 6, 6, 7, 26, 27, 7, 8, 11, 12, 8, 9, 10, 11, 9, 10, 12, 13, 25, 26, 13, 14, 21, 22, 22, 23, 23, 24, 24, 25, 14, 15, 19, 20, 20, 21, 15, 16, 16, 17, 18, 19, 17, 18, 30, 31, 29, 30, 31, 32, 32, 33 });
+        var draw = new[] { new Vector2(786.5f, 725f), new Vector2(840.202f, 768.511963f), new Vector2(921.972f, 832.904f), new Vector2(944.5f, 854.254f), new Vector2(946.556f, 957.744f), new Vector2(945.728f, 1060.97192f), new Vector2(960.916f, 1161.52f), new Vector2(987.922f, 1259.602f), new Vector2(1023.828f, 1332.194f), new Vector2(1043f, 1377.682f), new Vector2(1043f, 1441f), new Vector2(955.218f, 1493.042f), new Vector2(864.6f, 1538.77808f), new Vector2(791.709961f, 1600.946f), new Vector2(729.438f, 1649.936f), new Vector2(736.374f, 1662.97192f), new Vector2(723.964f, 1747.536f), new Vector2(668.514038f, 1773f), new Vector2(615.914f, 1768.408f), new Vector2(611.4f, 1747.166f), new Vector2(592.008f, 1655.364f), new Vector2(537.394f, 1582.6f), new Vector2(519.188f, 1525.842f), new Vector2(519.442f, 1487.158f), new Vector2(545.108032f, 1414.866f), new Vector2(603.474f, 1314.682f), new Vector2(656.336f, 1226.91406f), new Vector2(684.042f, 1146.542f), new Vector2(620.641968f, 1065.334f), new Vector2(567.615967f, 974.228f), new Vector2(536.5f, 922.391968f), new Vector2(547.316f, 882.011963f), new Vector2(582.813965f, 828.65f), new Vector2(622.926f, 788.576f), new Vector2(685.044f, 746.732f), new Vector2(732.946f, 724.296f) };
+        var method = typeof(PsdLayerPreviewRenderer).GetMethod("TryBuildShoulderWeightBand",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var previousCount = -1;
+        for (var repeat = 0; repeat < 3; repeat++)
+        {
+            var args = new object[] { data, draw, new Vector2(653.795044f, 1595.51819f), new Vector2(0.5018561f, -0.8649511f), 170.231888f, null, null, null };
+            AssertTrue((bool)method.Invoke(renderer, args), "Shoulder band must complete on regression topology: " + args[7]);
+            data = args[5];
+            draw = ((List<Vector2>)args[6]).ToArray();
+            var current = GetPrivateField<Vector2[]>(data, "vertices");
+            var triangles = GetPrivateField<int[]>(data, "triangles");
+            AssertEqual(current.Length, draw.Length, "Every inserted vertex must retain its posed target.");
+            for (var i = vertices.Length; i < current.Length; i++)
+                AssertTrue(System.Array.IndexOf(triangles, i) >= 0, "Every band vertex must belong to a triangle.");
+            for (var i = 0; i < vertices.Length; i++)
+                AssertVector(vertices[i], current[i], .0001f, "Shoulder cuts must preserve previous tool vertices.");
+            if (repeat > 0)
+                AssertEqual(previousCount, current.Length, "Repeated band building must not add duplicate cut vertices.");
+            previousCount = current.Length;
+        }
+    }
+
+    private static void ReanimateSkipsCheeksAndInteriorCornersKeepScope()
+    {
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+        var window = typeof(Reanimator);
+        var hips = (int)window.GetField("ReanimateHipsStep", flags).GetRawConstantValue();
+        var others = (int)window.GetField("ReanimateOthersStep", flags).GetRawConstantValue();
+        AssertEqual(hips + 1, others, "Others must follow hips directly.");
+        var names = (string[])window.GetField("ReanimateStepNames", flags).GetValue(null);
+        var instructions = (string[])window.GetField("ReanimateStepInstructions", flags).GetValue(null);
+        var sprites = (string[][])window.GetField("ReanimateStepSpriteNames", flags).GetValue(null);
+        AssertEqual(names.Length, instructions.Length, "Every step must have instructions.");
+        AssertEqual(names.Length, sprites.Length, "Every step must have a sprite mapping.");
+        AssertFalse(Array.Exists(names, name => name == "Cheeks"), "Reanimate must not contain a cheeks soft-body stage.");
+        var method = typeof(PsdLayerPreviewRenderer).GetMethod("RemapMouthInteriorHeadWeight", flags);
+        var mouth = new BoneWeight { boneIndex0 = 3, weight0 = 1f };
+        var result = (BoneWeight)method.Invoke(null, new object[] { mouth, 0, 4, 6 });
+        AssertFloat(1f, GetWeight(result, 3), .0001f, "Mouth weights must stay on mouth.");
+        var mixed = new BoneWeight { boneIndex0 = 0, weight0 = .3f, boneIndex1 = 2, weight1 = .7f };
+        result = (BoneWeight)method.Invoke(null, new object[] { mixed, 0, 4, 6 });
+        AssertFloat(0f, GetWeight(result, 0), .0001f, "Head influence must leave the mouth interior.");
+        AssertFloat(.3f, GetWeight(result, 4), .0001f, "Corners must receive exactly the head share.");
+        AssertFloat(.7f, GetWeight(result, 2), .0001f, "Lip influence must stay unchanged.");
+        result = (BoneWeight)method.Invoke(null, new object[] { result, 0, 4, 6 });
+        AssertFloat(.3f, GetWeight(result, 4), .0001f, "Repeated remapping must be stable.");
+    }
+
+    private static void CheekScUsesOneChildOfHeadOnRepeatedApply()
+    {
+        var renderer = new PsdLayerPreviewRenderer();
+        var head = BuildVisibleWorldBone(0, "head", -1, Vector2.zero);
+        head.length = 20f;
+        SetPrivateField(renderer, "bones", new List<PsdLayerPreviewRenderer.BoneInfo> { head });
+        var data = CreatePrivateNestedInstance(renderer, "LayerVertexData");
+        SetPrivateField(data, "layer", BuildLayer("face", 9876, Vector2.zero));
+        SetPrivateField(data, "vertices", new[] { new Vector2(-10,-10), new Vector2(10,-10),
+            new Vector2(10,10), new Vector2(-10,10), Vector2.zero });
+        SetPrivateField(data, "vertexUvs", new[] { Vector2.zero, Vector2.right, Vector2.one, Vector2.up, Vector2.one * .5f });
+        SetPrivateField(data, "triangles", new[] { 0,1,4, 1,2,4, 2,3,4, 3,0,4 });
+        SetPrivateField(data, "boundaryEdgePairs", new[] { 0,1, 1,2, 2,3, 3,0 });
+        SetPrivateField(data, "spriteBoneToRendererBone", new[] { 0 });
+        SetPrivateField(data, "bindBoneInverseMatrices", new[] { Matrix4x4.identity });
+        SetPrivateField(data, "boneWeights", Enumerable.Repeat(new BoneWeight { boneIndex0 = 0, weight0 = 1f }, 5).ToArray());
+        var pairs = new List<(Vector2 contour, Vector2 support, bool soften)> {
+            (new Vector2(-10,0), new Vector2(-5,0), false),
+            (new Vector2(10,0), new Vector2(5,0), false)
+        };
+        var method = typeof(PsdLayerPreviewRenderer).GetMethod("ApplySoftContourPairs",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        for (var repeat = 0; repeat < 2; repeat++)
+        {
+            var args = new object[] { data, 0, pairs, null, true };
+            AssertTrue((bool)method.Invoke(renderer, args), "Both cheeks must apply successfully: " + args[3]);
+            var bones = GetPrivateField<List<PsdLayerPreviewRenderer.BoneInfo>>(renderer, "bones");
+            AssertEqual(2, bones.Count, "Repeated application must reuse the cheek SC bone.");
+            AssertEqual("head_SC", bones[1].name, "Cheeks must use the shared head SC bone.");
+            AssertEqual(0, bones[1].parentId, "Cheek root must follow head.");
+            var vertices = GetPrivateField<Vector2[]>(data, "vertices");
+            var weights = GetPrivateField<BoneWeight[]>(data, "boneWeights");
+            foreach (var pair in pairs)
+            {
+                var index = System.Array.FindIndex(vertices, v => (v - pair.contour).sqrMagnitude < .0001f);
+                AssertTrue(index >= 0, "Cheek contour vertex must exist.");
+                AssertFloat(1f, GetWeight(weights[index], 1), .0001f, "Both cheeks must move with head_SC.");
+            }
+        }
+    }
+
+    private static void LipCornersHeightMovesIndependentlyAndResets()
+    {
+        var root = new GameObject("__LipCornersTest");
+        try
+        {
+            var corners = new GameObject("lip_corners").transform;
+            corners.SetParent(root.transform, false);
+            var lower = new GameObject("lower_lip").transform;
+            lower.SetParent(root.transform, false);
+            var pose = new ReaniIKFacePose();
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            typeof(ReaniIKFacePose).GetMethod("DiscoverBones", flags).Invoke(pose, new object[] { root.transform });
+            var apply = typeof(ReaniIKFacePose).GetMethod("Apply", flags);
+            var restore = typeof(ReaniIKFacePose).GetMethod("Restore", flags);
+            AssertTrue(pose.HasLipCorners, "Face pose must discover lip_corners.");
+            foreach (var height in new[] { -1f, 0f, 1f })
+            {
+                pose.lipCornersHeight = height;
+                apply.Invoke(pose, new object[] { root.transform });
+                AssertFloat(height * pose.lipCornersTravel, corners.localPosition.y, .0001f,
+                    "Corners height must support both directions and neutral.");
+                AssertVector(Vector2.zero, lower.localPosition, .0001f, "Corners must not move the lower lip.");
+                restore.Invoke(pose, null);
+                AssertFloat(0f, corners.localPosition.y, .0001f, "Rest pose must restore corners.");
+            }
+            pose.ResetControls();
+            AssertFloat(0f, pose.lipCornersHeight, .0001f, "Reset must center the corners slider.");
+        }
+        finally { UnityEngine.Object.DestroyImmediate(root); }
+    }
+
+    private static void SoftContourEndsSmoothOnlyImmediateContourNeighbors()
+    {
+        var renderer = new PsdLayerPreviewRenderer();
+        var data = CreatePrivateNestedInstance(renderer, "LayerVertexData");
+        SetPrivateField(data, "vertices", new[] { Vector2.zero, Vector2.right, Vector2.one, Vector2.up, Vector2.one * .5f });
+        SetPrivateField(data, "triangles", new[] { 0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4 });
+        SetPrivateField(data, "spriteBoneToRendererBone", new[] { 0, 1 });
+        var original = new[] {
+            new BoneWeight { boneIndex0 = 0, weight0 = .5f, boneIndex1 = 1, weight1 = .5f },
+            new BoneWeight { boneIndex0 = 0, weight0 = 1f },
+            new BoneWeight { boneIndex0 = 1, weight0 = 1f },
+            new BoneWeight { boneIndex0 = 1, weight0 = 1f },
+            new BoneWeight { boneIndex0 = 0, weight0 = 1f }
+        };
+        SetPrivateField(data, "boneWeights", original);
+        var method = typeof(PsdLayerPreviewRenderer).GetMethod("SmoothSoftContourEnds",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        method.Invoke(null, new object[] { data, new HashSet<int> { 0 }, new HashSet<int> { 4 }, 0, 1 });
+        var result = GetPrivateField<BoneWeight[]>(data, "boneWeights");
+        foreach (var index in new[] { 0, 1, 3 })
+            AssertTrue(Mathf.Abs(GetWeight(result[index], 1) - GetWeight(original[index], 1)) > .0001f,
+                "Endpoint and its immediate contour neighbors must be smoothed.");
+        AssertFloat(1f, GetWeight(result[2], 1), .0001f, "Second contour neighbor must remain unchanged.");
+        AssertFloat(1f, GetWeight(result[4], 0), .0001f, "Support must remain unchanged.");
+        foreach (var weight in result)
+            AssertFloat(1f, weight.weight0 + weight.weight1 + weight.weight2 + weight.weight3, .0001f,
+                "Smoothed weights must remain normalized.");
+    }
+
+    private static void OtherGapsBlendZonesAndPreserveCoveredWeights()
+    {
+        var vertices = new[] { new Vector2(-2f, 0f), Vector2.zero, new Vector2(2f, 0f) };
+        var original = new[] {
+            new BoneWeight { boneIndex0 = 1, weight0 = 1f },
+            new BoneWeight { boneIndex0 = 9, weight0 = 1f },
+            new BoneWeight { boneIndex0 = 2, weight0 = 1f }
+        };
+        var regions = new List<Vector2[]>();
+        foreach (var x in new[] { -2f, 2f })
+            regions.Add(new[] { new Vector2(x - .5f, -1f), new Vector2(x + .5f, -1f),
+                new Vector2(x + .5f, 1f), new Vector2(x - .5f, 1f) });
+        var method = typeof(PsdLayerPreviewRenderer).GetMethod("SoftenOtherGapWeights", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        var weights = (BoneWeight[])original.Clone();
+        method.Invoke(null, new object[] { vertices, weights, regions });
+        AssertEqual(1, weights[0].boneIndex0, "Left region must keep its assigned bone.");
+        AssertEqual(2, weights[2].boneIndex0, "Right region must keep its assigned bone.");
+        AssertEqual(1, weights[1].boneIndex0, "Equal influences use deterministic bone ordering.");
+        AssertEqual(2, weights[1].boneIndex1, "Gap must blend both available zones.");
+        AssertFloat(.5f, weights[1].weight0, .0001f, "Symmetric gap should blend equally.");
+        AssertFloat(.5f, weights[1].weight1, .0001f, "Gap weights must be normalized.");
+        method.Invoke(null, new object[] { vertices, weights, regions });
+        AssertFloat(.5f, weights[1].weight0, .0001f, "Repeated smoothing must be stable.");
+        weights = (BoneWeight[])original.Clone();
+        method.Invoke(null, new object[] { vertices, weights, new List<Vector2[]>() });
+        AssertEqual(9, weights[1].boneIndex0, "No regions must leave baseline weights intact.");
+        method.Invoke(null, new object[] { vertices, weights, new List<Vector2[]> { regions[0] } });
+        AssertEqual(1, weights[1].boneIndex0, "One available region must extend into the gap.");
+        AssertFloat(1f, weights[1].weight0, .0001f, "One-zone weights must remain normalized.");
+    }
+
     private static void BoobV2ManualContourIsDefaultAndSmoothsClosedStroke()
     {
         var renderer = new PsdLayerPreviewRenderer();

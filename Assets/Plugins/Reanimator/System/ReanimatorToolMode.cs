@@ -26,6 +26,7 @@ internal enum ReanimatorToolMode
     VolumeCurve = 22,
     Face = 23,
     SoftContour = 24,
-    VGen = 25
+    VGen = 25,
+    Skeletron = 26
 }
 #endif

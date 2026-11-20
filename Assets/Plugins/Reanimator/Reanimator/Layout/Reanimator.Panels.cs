@@ -8,12 +8,13 @@ using UnityEngine;
 public partial class Reanimator : EditorWindow
 {
     private const string SpriteSheetRepairPsdParamsLabel = "Repair PSD Params";
-    private const string LeftToolIconSheetPath = "Assets/Plugins/Reanimator/Graphics/icons.psd";
+    private const string LeftToolIconSheetPath = "Assets/Plugins/Reanimator/Graphics/icons.png";
     private static readonly string[] SpriteSheetRepairButtonLabels =
     {
         SpriteSheetRepairPsdParamsLabel,
         "Generate Missing Geometry",
-        "Fix Skin Weights",
+        "Fix Weights",
+        "Fix Geo",
         "Refresh Cache"
     };
     private static Dictionary<string, Sprite> leftToolIconSprites;
@@ -213,14 +214,28 @@ public partial class Reanimator : EditorWindow
 
         EnsurePreviewNavigators();
         StoreActivePreviewNavigator();
+        if (previewMode == PreviewMode.Reanimate)
+        {
+            if (reanimateStep == 0)
+            {
+                ReanimatorSkeletronModule.CancelPlacement(layerPreviewRenderer);
+                layerPreviewRenderer?.CancelSoftContourBellyStroke();
+            }
+            LeaveReanimateFaceStep();
+            LeaveReanimateChestStep();
+            LeaveReanimateLimbStep();
+            LeaveReanimateOthers();
+        }
 
-        if (IsSpritePreviewMode(mode))
+        if (IsSpritePreviewMode(mode) || mode == PreviewMode.Reanimate)
         {
             CommitBoneEditRestPoseIfLeaving(ReanimatorToolMode.NoSettings);
             CancelActivePreviewTool();
         }
 
         previewMode = mode;
+        if (mode == PreviewMode.Reanimate)
+            Focus();
         previewNavigator = GetPreviewNavigator(previewMode);
         if (previewMode == PreviewMode.Comfimator)
             layerPreviewRenderer?.SelectLayer(null);
@@ -268,6 +283,7 @@ public partial class Reanimator : EditorWindow
     private void CancelActivePreviewTool()
     {
         SetBottomToolMode(bottomToolMode);
+        ReanimatorSkeletronModule.CancelPlacement(layerPreviewRenderer);
         layerPreviewRenderer?.CancelElbowTool();
         layerPreviewRenderer?.CancelLimbsTool();
         layerPreviewRenderer?.CancelJointTool();
@@ -284,6 +300,8 @@ public partial class Reanimator : EditorWindow
     private void SetBottomToolMode(ReanimatorToolMode mode)
     {
         mode = ReanimatorToolModeAlgorithms.NormalizeToolMode(mode);
+        if (bottomToolMode == ReanimatorToolMode.Skeletron && mode != ReanimatorToolMode.Skeletron)
+            ReanimatorSkeletronModule.CancelPlacement(layerPreviewRenderer);
         if (bottomToolMode == ReanimatorToolMode.SoftContour &&
             mode != ReanimatorToolMode.SoftContour && layerPreviewRenderer != null)
         {
@@ -319,6 +337,8 @@ public partial class Reanimator : EditorWindow
 
         RestorePreviewPoseIfEnteringBoneEdit(mode);
 
+        if (mode == ReanimatorToolMode.Face && bottomToolMode != ReanimatorToolMode.Face)
+            TrySelectFaceSpriteOnEntry();
         bottomToolMode = mode;
     }
 
@@ -484,14 +504,15 @@ public partial class Reanimator : EditorWindow
         return style;
     }
 
-    private void DrawLeftToolButtonContent(Rect rect, string label, bool alert = false, bool incomplete = false, IReanimatorModule module = null)
+    private void DrawLeftToolButtonContent(Rect rect, string label, bool alert = false, bool incomplete = false, IReanimatorModule module = null, string iconSpriteName = null)
     {
         var sprite = GetLeftToolButtonIconSprite(label, module);
+        if (iconSpriteName != null) GetLeftToolIconSprites().TryGetValue(iconSpriteName, out sprite);
         var iconName = GetLeftToolButtonIconName(label);
         var icon = sprite == null && !string.IsNullOrEmpty(iconName) ? EditorGUIUtility.IconContent(iconName).image : null;
-        const float iconSize = 16f;
+        const float iconSize = 17.68f;
         const float iconLeft = 6f;
-        const float textLeft = 26f;
+        const float textLeft = 30f;
 
         if (sprite != null || icon != null)
         {
@@ -549,6 +570,8 @@ public partial class Reanimator : EditorWindow
                     return "Add / Split";
                 case "bones.edit":
                     return "Edit bones";
+                case "bones.skeletron":
+                    return "Skeletron";
                 case "geometry.auto":
                     return "Auto geometry";
                 case "geometry.edit":
@@ -558,8 +581,11 @@ public partial class Reanimator : EditorWindow
                 case "geometry.joint":
                     return "Joint";
                 case "geometry.boob":
+                    return "Booty";
                 case "geometry.soft-contour":
-                    return "Boob";
+                    return "SC";
+                case "geometry.v-gen":
+                    return "V-gen";
                 case "geometry.volume-curve":
                     return "Volume";
                 case "geometry.circle-clean":
@@ -587,7 +613,7 @@ public partial class Reanimator : EditorWindow
                 case "weights.projector-fix":
                     return "fix";
                 case "face.main":
-                    return "Preview Pose";
+                    return "Face";
                 case "influence.bone":
                     return "bone influence";
                 case "influence.sprite":
@@ -596,6 +622,10 @@ public partial class Reanimator : EditorWindow
                     return "Generate Missing Geometry";
                 case "utility.fix-skin-weights":
                     return "Fix Skin Weights";
+                case "utility.fix-geometry":
+                    return "Fix Geo";
+                case "utility.kill-data":
+                    return "KillData";
                 case "utility.kill-selected-sprite-weights":
                     return "Kill Weights";
                 case "utility.delete-bones":
@@ -626,8 +656,8 @@ public partial class Reanimator : EditorWindow
                 return "Limbs";
             case "Joint":
                 return "Joint";
-            case "Boob":
-                return "Boob";
+            case "Booty": case "Boob":
+                return "Booty";
             case "Volume":
                 return "Volume";
             case "CircleClean":
@@ -666,6 +696,10 @@ public partial class Reanimator : EditorWindow
                 return "Generate Missing Geometry";
             case "Fix Skin Weights":
                 return "Fix Skin Weights";
+            case "Fix Weights":
+                return "Fix Skin Weights";
+            case "Fix Geo":
+                return "Fix Geo";
             case "Kill Weights":
                 return "Kill Weights";
             case "CopyBon":
@@ -706,9 +740,18 @@ public partial class Reanimator : EditorWindow
                 case "geometry.retriangulate":
                 case "geometry.vertex-cull":
                 case "weights.slider":
+                case "bones.skeletron":
+                case "face.main":
+                case "geometry.soft-contour":
+                case "weights.projector-fix":
+                case "weights.brush":
+                case "influence.bone":
+                case "influence.sprite":
                 case "utility.generate-missing-geometry":
                 case "utility.kill-selected-sprite-weights":
+                case "utility.fix-skin-weights":
                 case "utility.kill-data":
+                case "utility.fix-geometry":
                 case "utility.delete-bones":
                 case "utility.copy-bones":
                 case "utility.refresh-cache":
@@ -719,18 +762,28 @@ public partial class Reanimator : EditorWindow
         switch (NormalizeLeftToolButtonLabel(label))
         {
             case "Preview Pose":
+            case "Skeletron":
+            case "Face":
+            case "SC":
+            case "FIX":
+            case "Brush":
+            case "Bone":
+            case "Sprite":
             case "Restore Pose":
             case "Geometry":
             case "Optimize":
             case "Default Geometry":
             case "Limbs":
             case "Joint":
-            case "Boob":
+            case "Booty": case "Boob":
             case "CirCl":
             case "ReTri":
             case "Cull":
             case "Generate Missing Geometry":
             case "Kill Weights":
+            case "Fix Skin Weights":
+            case "Fix Weights":
+            case "Fix Geo":
             case "KillData":
             case "CopyBon":
             case "Copy Bones":
@@ -772,6 +825,9 @@ public partial class Reanimator : EditorWindow
 
         var texture = sprite.texture;
         var textureRect = sprite.textureRect;
+        var scale = Mathf.Min(rect.width / textureRect.width, rect.height / textureRect.height);
+        var fittedSize = textureRect.size * scale;
+        rect = new Rect(rect.center - fittedSize * .5f, fittedSize);
         var texCoords = new Rect(
             textureRect.x / texture.width,
             textureRect.y / texture.height,
@@ -826,7 +882,7 @@ public partial class Reanimator : EditorWindow
                 return "AvatarMask Icon";
             case "Joint":
                 return string.Empty;
-            case "Boob":
+            case "Booty": case "Boob":
                 return "Profiler.Physics";
             case "Skeletron":
                 return "d_AvatarPivot";
@@ -867,6 +923,10 @@ public partial class Reanimator : EditorWindow
                 return "d_preAudioLoopOff";
             case "Fix Skin Weights":
                 return "AvatarMask Icon";
+            case "Fix Weights":
+                return "AvatarMask Icon";
+            case "Fix Geo":
+                return "Mesh Icon";
             case SpriteSheetRepairPsdParamsLabel:
                 return "TreeEditor.Refresh";
             case "CopyBon":
@@ -1462,7 +1522,7 @@ public partial class Reanimator : EditorWindow
                 new Rect(x, warningStartY, NamingIndicatorDiagnosticButtonWidth, NamingIndicatorDiagnosticButtonHeight),
                 "WA",
                 new Color(0.86f, 0.12f, 0.1f, 1f),
-                "WA — Wrong Arms\nНажми WA, чтобы поменять местами имена перепутанных слоёв рук в исходном PSD. Красный WA блокирует ALLIN.",
+                "WA — Swapped arms\nClick to swap the left/right arm layer names. Fix this before running ALLIN.",
                 out var tooltip);
             if (!string.IsNullOrEmpty(tooltip))
                 hoveredTooltip = tooltip;
@@ -1477,7 +1537,7 @@ public partial class Reanimator : EditorWindow
                 new Rect(x, legY, NamingIndicatorDiagnosticButtonWidth, NamingIndicatorDiagnosticButtonHeight),
                 "WL",
                 new Color(0.86f, 0.12f, 0.1f, 1f),
-                "WL — Wrong Legs\nНазвания/стороны спрайтов ног перепутаны относительно их положения. Нажми WL: будет выбран подозрительный l_leg. Переименуй или поменяй местами l_leg и r_leg, пока WL не исчезнет. Красный WL полностью блокирует ALLIN.",
+                "WL — Swapped legs\nClick to select l_leg. Correct the l_leg / r_leg names before running ALLIN.",
                 out var tooltip);
             if (!string.IsNullOrEmpty(tooltip))
                 hoveredTooltip = tooltip;
@@ -1492,7 +1552,7 @@ public partial class Reanimator : EditorWindow
                 new Rect(x, duplicatesY, NamingIndicatorDiagnosticButtonWidth, NamingIndicatorDiagnosticButtonHeight),
                 "DD",
                 new Color(0.86f, 0.12f, 0.1f, 1f),
-                "DD — Duplicate Definitions\nНайдены несколько спрайтов с одинаковым именем. Нажимай DD повторно, чтобы по очереди выбирать дубликаты, и дай каждому уникальное имя. Красный DD полностью блокирует ALLIN.",
+                "DD — Duplicate names\nClick to cycle through duplicate layers. Give each a unique name before running ALLIN.",
                 out var tooltip);
             if (!string.IsNullOrEmpty(tooltip))
                 hoveredTooltip = tooltip;
@@ -1513,7 +1573,7 @@ public partial class Reanimator : EditorWindow
                 refreshRect,
                 "R",
                 new Color(0.12f, 0.38f, 0.9f, 1f),
-                "R — Refresh\nПересчитывает индикатор по текущим именам и положениям спрайтов, очищает старые сигнатуры предупреждений и обновляет preview cache. R синий, это не ошибка и он не блокирует ALLIN.",
+                "R — Refresh\nRecheck layer names and positions, clear stale warnings and reload the preview.",
                 out var refreshTooltip);
         if (!string.IsNullOrEmpty(refreshTooltip))
             hoveredTooltip = refreshTooltip;
@@ -1543,7 +1603,7 @@ public partial class Reanimator : EditorWindow
         style.hover.textColor = Color.white;
         style.active.textColor = Color.white;
         style.focused.textColor = Color.white;
-        var clicked = GUI.Button(rect, new GUIContent(label, tooltip), style);
+        var clicked = GUI.Button(rect, new GUIContent(label), style);
         GUI.backgroundColor = previousBackground;
         return clicked;
     }
@@ -1553,26 +1613,16 @@ public partial class Reanimator : EditorWindow
         if (string.IsNullOrWhiteSpace(tooltip) || Event.current == null || Event.current.type != EventType.Repaint)
             return;
 
-        var width = Mathf.Max(
-            120f,
-            footerRect.width - NamingIndicatorDiagnosticButtonWidth - NamingIndicatorPadding * 3f - NamingIndicatorDiagnosticGap);
+        var width = Mathf.Max(120f,footerRect.width-NamingIndicatorPadding*2f);
         var content = new GUIContent(tooltip);
         var style = new GUIStyle(EditorStyles.helpBox)
         {
-            wordWrap = true,
-            richText = false,
-            alignment = TextAnchor.UpperLeft,
-            fontSize = 11,
-            padding = new RectOffset(8, 8, 7, 7)
+            wordWrap=true,richText=false,alignment=TextAnchor.UpperLeft,fontSize=11,
+            padding=new RectOffset(8,8,7,7)
         };
-        var height = Mathf.Min(
-            footerRect.height - NamingIndicatorPadding * 2f,
-            Mathf.Max(72f, style.CalcHeight(content, width)));
-        var cardRect = new Rect(
-            footerRect.x + NamingIndicatorPadding,
-            footerRect.y + NamingIndicatorPadding,
-            width,
-            height);
+        var height=Mathf.Min(160f,Mathf.Max(32f,style.CalcHeight(content,width)));
+        var cardRect=new Rect(footerRect.x+NamingIndicatorPadding,
+            Mathf.Max(4f,footerRect.y-height-NamingIndicatorPadding),width,height);
 
         GUI.Box(cardRect, content, style);
     }
@@ -1615,6 +1665,8 @@ public partial class Reanimator : EditorWindow
             return;
 
         layerPreviewRenderer.SelectLayer(layer);
+        if (previewMode == PreviewMode.Reanimate)
+            reanimateDiagnosticLayer = layer;
         visibilitySprite = true;
         visibilityBone = false;
         visibilityAutoScrolledLayerSelectionKey = string.Empty;
@@ -1657,6 +1709,10 @@ public partial class Reanimator : EditorWindow
         namingIndicatorParts = null;
         namingIndicatorCanvasRect = Rect.zero;
         namingIndicatorHitMasks.Clear();
+        if (namingIndicatorGrayAtlas != null)
+            UnityEngine.Object.DestroyImmediate(namingIndicatorGrayAtlas);
+        namingIndicatorGrayAtlas = null;
+        namingIndicatorGrayAtlasSourceId = 0;
     }
 
     private void HandleNamingIndicatorInput(
@@ -1721,12 +1777,58 @@ public partial class Reanimator : EditorWindow
 
     private static bool ShouldShowNamingIndicatorPart(string partName, HashSet<string> sourceNames)
     {
-        var normalized = NormalizeNamingIndicatorName(partName);
-        if (normalized != "l_arm_2" && normalized != "r_arm_2")
-            return true;
+        return !string.IsNullOrWhiteSpace(partName);
+    }
 
-        return sourceNames != null &&
-               (sourceNames.Contains("l_arm_2") || sourceNames.Contains("r_arm_2"));
+    private static bool IsNamingIndicatorSecondaryPart(string partName)
+    {
+        switch (NormalizeNamingIndicatorName(partName))
+        {
+            case "l_arm2": case "r_arm2": case "l_arm_2": case "r_arm_2":
+            case "l_leg2": case "r_leg2": case "l_leg_2": case "r_leg_2":
+            case "lock1": case "lock2": case "l_boob": case "r_boob":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static Texture2D namingIndicatorGrayAtlas;
+    private static int namingIndicatorGrayAtlasSourceId;
+
+    private static Texture2D GetNamingIndicatorGrayAtlas(Texture2D source)
+    {
+        if (namingIndicatorGrayAtlas != null && namingIndicatorGrayAtlasSourceId == source.GetInstanceID())
+            return namingIndicatorGrayAtlas;
+        if (namingIndicatorGrayAtlas != null)
+            UnityEngine.Object.DestroyImmediate(namingIndicatorGrayAtlas);
+        var previous = RenderTexture.active;
+        var temporary = RenderTexture.GetTemporary(source.width, source.height, 0, RenderTextureFormat.ARGB32);
+        try
+        {
+            Graphics.Blit(source, temporary);
+            RenderTexture.active = temporary;
+            namingIndicatorGrayAtlas = new Texture2D(source.width, source.height, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            namingIndicatorGrayAtlas.ReadPixels(new Rect(0, 0, source.width, source.height), 0, 0);
+            var pixels = namingIndicatorGrayAtlas.GetPixels32();
+            for (var i = 0; i < pixels.Length; i++)
+            {
+                var gray = (byte)Mathf.RoundToInt(pixels[i].r * 0.299f + pixels[i].g * 0.587f + pixels[i].b * 0.114f);
+                pixels[i] = new Color32(gray, gray, gray, pixels[i].a);
+            }
+            namingIndicatorGrayAtlas.SetPixels32(pixels);
+            namingIndicatorGrayAtlas.Apply(false, true);
+            namingIndicatorGrayAtlasSourceId = source.GetInstanceID();
+            return namingIndicatorGrayAtlas;
+        }
+        finally
+        {
+            RenderTexture.active = previous;
+            RenderTexture.ReleaseTemporary(temporary);
+        }
     }
 
     private static Vector2 BuildNamingIndicatorRotationPivot(Rect drawRect, NamingIndicatorPart part)
@@ -1835,80 +1937,34 @@ public partial class Reanimator : EditorWindow
         }
     }
 
-    private static string BuildNamingIndicatorPartHoverTooltip(
-        string partName,
-        HashSet<string> sourceNames,
-        NamingIndicatorIssueState issues)
+    private static string BuildNamingIndicatorPartHoverTooltip(string partName,HashSet<string> sourceNames,NamingIndicatorIssueState issues)
     {
-        var normalized = NormalizeNamingIndicatorName(partName);
-        if (string.IsNullOrEmpty(normalized))
-            return string.Empty;
-
-        if (!ShouldDrawNamingIndicatorPart(partName, sourceNames))
+        var normalized=NormalizeNamingIndicatorName(partName);
+        if(string.IsNullOrEmpty(normalized))return string.Empty;
+        if(IsNamingIndicatorSecondaryPart(partName))
+            return normalized+" — Optional\n"+(ShouldDrawNamingIndicatorPart(partName,sourceNames)?"Layer found.":"Optional layer is not present.");
+        if(!ShouldDrawNamingIndicatorPart(partName,sourceNames))
+            return normalized=="body" || normalized=="topwear"
+                ?"body / topwear — Missing\nName the body layer body or topwear."
+                :normalized+" — Missing\nCreate or rename a layer to "+normalized+".";
+        var reasons=new List<string>();
+        if(issues!=null)
         {
-            if (normalized == "body" || normalized == "topwear")
+            if(issues.ArmOrderLayer!=null && IsNamingIndicatorSameArmPair(normalized,issues.ArmOrderLayer.name))
             {
-                return "body / topwear — НЕ НАЙДЕН\n" +
-                       "Для этой области допустимо любое из имён: \"body\" или \"topwear\". " +
-                       "Создай соответствующий слой или переименуй его одним из этих имён.";
+                var key=GetNamingIndicatorArmPairKey(normalized);
+                reasons.Add("WA: swap the l_"+key+" / r_"+key+" layer names.");
             }
-
-            return normalized + " — НЕ НАЙДЕН\n" +
-                   "В открытой иерархии нет слоя, подходящего для части \"" + normalized + "\". " +
-                   "Создай его или переименуй соответствующий слой в \"" + normalized + "\".";
+            if(issues.LegOrderLayer!=null && (normalized=="l_leg" || normalized=="r_leg"))
+                reasons.Add("WL: swap the l_leg / r_leg layer names.");
+            foreach(var layer in issues.DuplicateLayers)
+                if(layer!=null && string.Equals(normalized,NormalizeNamingIndicatorName(layer.name),StringComparison.OrdinalIgnoreCase))
+                {reasons.Add("DD: multiple layers use this name. Keep it on only one layer.");break;}
         }
-
-        var reasons = new List<string>();
-        if (issues != null)
-        {
-            if (issues.ArmOrderLayer != null && IsNamingIndicatorSameArmPair(normalized, issues.ArmOrderLayer.name))
-            {
-                var pairKey = GetNamingIndicatorArmPairKey(normalized);
-                var leftName = "l_" + pairKey;
-                var rightName = "r_" + pairKey;
-                reasons.Add(
-                    "WA: стороны рук перепутаны — " + leftName + " находится правее " + rightName + ". " +
-                    "Поменяй имена " + leftName + " и " + rightName + " местами.");
-            }
-
-            if (issues.LegOrderLayer != null && (normalized == "l_leg" || normalized == "r_leg"))
-            {
-                reasons.Add(
-                    "WL: стороны ног перепутаны — l_leg находится правее r_leg. " +
-                    "Поменяй имена l_leg и r_leg местами.");
-            }
-
-            for (var i = 0; i < issues.DuplicateLayers.Count; i++)
-            {
-                var duplicate = issues.DuplicateLayers[i];
-                if (duplicate == null || !string.Equals(
-                        normalized,
-                        NormalizeNamingIndicatorName(duplicate.name),
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                reasons.Add(
-                    "DD: найдено несколько слоёв с именем \"" + normalized + "\". " +
-                    "Оставь это имя только у одного слоя.");
-                break;
-            }
-        }
-
-        if (reasons.Count > 0)
-            return normalized + " — ПРОБЛЕМА\n" + string.Join("\n", reasons);
-
-        if (normalized == "body" || normalized == "topwear")
-        {
-            var matchedName = sourceNames != null && sourceNames.Contains(normalized)
-                ? normalized
-                : normalized == "body" ? "topwear" : "body";
-            return matchedName + " — OK\nНайден допустимый слой \"" + matchedName + "\". " +
-                   "Для этой области работают оба имени: body и topwear.";
-        }
-
-        return normalized + " — OK\nСлой найден, ошибок имени или стороны для этой части нет.";
+        if(reasons.Count>0)return normalized+" — Check layer\n"+string.Join("\n",reasons);
+        if(normalized=="body" || normalized=="topwear")
+            return "body / topwear — OK\nBody layer found. Either name is supported.";
+        return normalized+" — OK\nLayer found; name and side are valid.";
     }
 
     private PsdLayerPreviewRenderer.LayerInfo FindNamingIndicatorLayer(string partName)
@@ -1964,6 +2020,8 @@ public partial class Reanimator : EditorWindow
         HashSet<string> sourceNames,
         NamingIndicatorIssueState issues)
     {
+        if (IsNamingIndicatorSecondaryPart(partName))
+            return false;
         if (!ShouldDrawNamingIndicatorPart(partName, sourceNames))
             return true;
 
@@ -2017,13 +2075,22 @@ public partial class Reanimator : EditorWindow
     {
         var prevColor = GUI.color;
         var previousMatrix = GUI.matrix;
-        GUI.color = isProblem
-            ? new Color(1f, 0.12f, 0.1f, 1f)
-            : Color.white;
+        var secondary = IsNamingIndicatorSecondaryPart(part.Name);
+        GUI.color = secondary ? new Color(1f, 1f, 1f, 0.45f)
+            : isProblem ? new Color(1f, 0.12f, 0.1f, 1f) : Color.white;
         var drawRect = BuildNamingIndicatorPartRect(origin, scale, part.DocumentRect);
         if (Mathf.Abs(part.RotationDegrees) > 0.001f)
             GUIUtility.RotateAroundPivot(part.RotationDegrees, BuildNamingIndicatorRotationPivot(drawRect, part));
-        DrawSpriteIcon(drawRect, part.Sprite);
+        if (secondary && part.Sprite != null && part.Sprite.texture != null)
+        {
+            var source = part.Sprite.texture;
+            var textureRect = part.Sprite.textureRect;
+            GUI.DrawTextureWithTexCoords(drawRect, GetNamingIndicatorGrayAtlas(source), new Rect(
+                textureRect.x / source.width, textureRect.y / source.height,
+                textureRect.width / source.width, textureRect.height / source.height), true);
+        }
+        else
+            DrawSpriteIcon(drawRect, part.Sprite);
         GUI.matrix = previousMatrix;
         GUI.color = prevColor;
     }
@@ -2184,7 +2251,9 @@ public partial class Reanimator : EditorWindow
             var documentRect = new Rect(spritePosition.x, spritePosition.y, spriteRect.width, spriteRect.height);
             namingIndicatorParts.Add(new NamingIndicatorPart
             {
-                Name = name,
+                // PSD uses arm2; the naming contract uses arm_2. Prefer the authored
+                // second arms so the legacy rotated fallback is not added on top.
+                Name = normalized == "l_arm2" ? "l_arm_2" : normalized == "r_arm2" ? "r_arm_2" : name,
                 Sprite = sprite,
                 DocumentRect = documentRect
             });

@@ -34,9 +34,9 @@ internal static partial class ReanimatorSelfTests
         var elbowModule = modules.First(module => module.Id == "geometry.elbow");
         AssertEqual("Geometry", faceModule.Section, "Face should be in the Geometry section.");
         AssertEqual(elbowModule.RowGroup, faceModule.RowGroup, "Face should share a toolbar row with Elbow.");
-        AssertTrue(
+        AssertFalse(
             Reanimator.IsLeftToolMarkedIncomplete(faceModule.Label(null), faceModule),
-            "Face should use the red incomplete-tool button style.");
+            "Face should use the normal completed-tool button style.");
 
         AssertTrue(modules.OfType<IReanimatorPreviewModule>().Any(module => module.Id == "geometry.volume-curve"), "Registry should include preview modules.");
         AssertTrue(modules.OfType<IReanimatorDebugPreviewModule>().Any(module => module.Id == "geometry.volume-curve"), "Registry should include debug preview modules.");

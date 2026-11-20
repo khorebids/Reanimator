@@ -73,6 +73,12 @@ public partial class PsdLayerPreviewRenderer
             if (importer == null)
                 throw new System.InvalidOperationException("Asset importer disappeared before saving: " + assetPath);
 
+            if (importer is ISpriteEditorDataProvider provider)
+            {
+                provider.InitSpriteEditorDataProvider();
+                if (ReanimatorMeshWinding.Repair(provider) > 0) provider.Apply();
+            }
+
             EditorUtility.SetDirty(importer);
             AssetDatabase.WriteImportSettingsIfDirty(assetPath);
             AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceSynchronousImport);

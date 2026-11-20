@@ -247,7 +247,7 @@ public partial class PsdLayerPreviewRenderer
         {
             var selectionKey = layers[i].Key;
             var data = layers[i].Value;
-            if (data == null || data.vertices == null || data.vertices.Length == 0)
+            if (data == null || data.vertices == null || data.vertices.Length == 0 || IsBackHairAutoWeightLayer(data))
             {
                 skippedLayers++;
                 continue;
@@ -431,8 +431,7 @@ public partial class PsdLayerPreviewRenderer
             results.Add(ApplyNeckAutoWeights());
         if ((regions & (1 << 2)) != 0)
             results.Add(ApplyFrontHairAutoWeights());
-        if ((regions & (1 << 3)) != 0)
-            results.Add(ApplyBackHairAutoWeights());
+        // Back hair is authored manually with SRN; preserve its assigned weights.
         if ((regions & (1 << 4)) != 0)
             results.Add(ApplyBodyAutoWeights());
         if ((regions & (1 << 5)) != 0)
@@ -795,6 +794,8 @@ public partial class PsdLayerPreviewRenderer
             weightedVertices += layerWeightedVertices;
         }
 
+        if (!TryApplyShouldersWeightsIfReady(out var shoulderError))
+            throw new InvalidOperationException(shoulderError);
         return "body midpoint-nearest whitelist weighted " + weightedVertices + " vertices on " + weightedLayers + " layers, skipped " + skippedLayers + " body candidates, ignored " + nonBodyLayers + " other layers";
     }
 

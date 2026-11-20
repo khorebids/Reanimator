@@ -160,30 +160,41 @@ public partial class Reanimator : EditorWindow
     private void KillPsdData()
     {
         var path = GetSelectedAssetPath();
-        if (!IsPsdPath(path) || !EditorUtility.DisplayDialog(
-                "KillData",
-                $"Reset all import settings and Reanimator edits for {path}? References to generated sprites may break.",
-                "Reset PSD", "Cancel"))
+        if (!IsPsdPath(path) || !ConfirmPsdReset(path, false))
             return;
 
-        ClearPendingApply();
-        CancelBoneRename();
-        EndDepthDrag();
-        SetNoSettingsToolMode();
-        layerPreviewRenderer?.StopPreviewTestAnimation();
-
-        if (!ReanimatorAssetMetaPersistence.TryResetPsdImporter(path, out var error))
+        if (!TryKillPsdData(path, out var error))
         {
             ReanimatorLog.Error($"[Reanimator] KillData failed: {error}");
             ShowNotification(new GUIContent(error));
             return;
         }
 
+        ReselectAssetDeferred(path);
+        ShowNotification(new GUIContent("PSD reset"));
+    }
+
+    private static bool ConfirmPsdReset(string path, bool regenerate) =>
+        EditorUtility.DisplayDialog(regenerate ? "Reanimate Restart" : "KillData",
+            $"Reset all import settings and Reanimator edits for {path}? References to generated sprites may break." +
+            (regenerate ? "\n\nMissing geometry will be generated after the reset." : string.Empty),
+            regenerate ? "Restart" : "Reset PSD", "Cancel");
+
+    private bool TryKillPsdData(string path, out string error)
+    {
+        ClearPendingApply();
+        CancelBoneRename();
+        EndDepthDrag();
+        SetNoSettingsToolMode();
+        layerPreviewRenderer?.StopPreviewTestAnimation();
+
+        if (!ReanimatorAssetMetaPersistence.TryResetPsdImporter(path, out error))
+            return false;
+
         missingGeometryScanState.ClearAlert(NormalizeReanimatorAssetPath(path));
         layerPreviewRenderer?.Revert(path);
         ForceCleanPreviewCache();
-        ReselectAssetDeferred(path);
-        ShowNotification(new GUIContent("PSD reset"));
+        return true;
     }
 
     private void GenerateMissingGeometry()
@@ -423,6 +434,8 @@ public partial class Reanimator : EditorWindow
         if (string.Equals(activeAssetPath, selectedPath, StringComparison.OrdinalIgnoreCase))
             return false;
 
+        CommitTextFieldEdit();
+        CommitBoneRename();
         activeAssetPath = selectedPath;
         return true;
     }

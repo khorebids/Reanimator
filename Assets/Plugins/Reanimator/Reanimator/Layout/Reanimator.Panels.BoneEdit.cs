@@ -53,6 +53,64 @@ public partial class Reanimator : EditorWindow
         }
     }
 
+    private void DrawPreviewBoneRigSettings(PsdLayerPreviewRenderer renderer,
+        System.Collections.Generic.IReadOnlyList<PsdLayerPreviewRenderer.BoneInfo> bones, int boneIndex)
+    {
+        var rig = renderer.GetPreviewBoneRig(boneIndex);
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Preview Rig", EditorStyles.boldLabel);
+        EditorGUI.BeginChangeCheck();
+        rig.enabled = EditorGUILayout.Toggle("Auto Pose / Rotate", rig.enabled);
+        if (rig.enabled)
+        {
+            rig.mode = (PsdLayerPreviewRenderer.PreviewBoneRigMode)EditorGUILayout.EnumPopup("Auto Pose Mode", rig.mode);
+            var labels = new string[bones.Count + 1];
+            labels[0] = "Select joint bone";
+            var selected = 0;
+            for (var i = 0; i < bones.Count; i++)
+            {
+                labels[i + 1] = bones[i]?.name ?? "—";
+                if (bones[i]?.name == rig.jointBone)
+                    selected = i + 1;
+            }
+            var next = EditorGUILayout.Popup("Joint Child Bone", selected, labels);
+            if (next != selected)
+                rig.jointBone = next == 0 ? null : bones[next - 1].name;
+            if (next > 0)
+            {
+                var parent = bones[next - 1].parentId;
+                if (parent >= 0 && parent < bones.Count)
+                    EditorGUILayout.LabelField("Joint Parent", bones[parent].name);
+            }
+            rig.flip = EditorGUILayout.Toggle("Flip", rig.flip);
+            rig.shiftOnBend = EditorGUILayout.Toggle("Move Outward on Bend", rig.shiftOnBend);
+            if (rig.shiftOnBend)
+                rig.maximumShift = Mathf.Max(0f, EditorGUILayout.FloatField("Maximum Shift (px)", rig.maximumShift));
+            if (rig.mode == PsdLayerPreviewRenderer.PreviewBoneRigMode.ArmAttachedMajorAngle ||
+                rig.mode == PsdLayerPreviewRenderer.PreviewBoneRigMode.ShouldersAttachedRetreat)
+            {
+                rig.referenceMajorAngle = EditorGUILayout.Slider("Rest Major Angle", rig.referenceMajorAngle, 180f, 360f);
+                if (GUILayout.Button("Capture Rest Major Angle"))
+                {
+                    for (int i = 0; i < bones.Count; i++)
+                        if (bones[i].name == rig.jointBone && bones[i].parentId >= 0)
+                            rig.referenceMajorAngle = 360f - Vector2.Angle(bones[bones[i].parentId].worldRotation * Vector3.right,
+                                bones[i].worldRotation * Vector3.right);
+                    renderer.SavePreviewBoneRigs();
+                }
+            }
+            var error = renderer.ValidatePreviewBoneRig(rig);
+            if (error != null)
+                EditorGUILayout.HelpBox(error, MessageType.Info);
+        }
+        if (EditorGUI.EndChangeCheck())
+        {
+            renderer.SavePreviewBoneRigs();
+            Repaint();
+        }
+        EditorGUILayout.Space();
+    }
+
     private void DrawSelectedBoneEditableFields(
         PsdLayerPreviewRenderer renderer,
         System.Collections.Generic.IReadOnlyList<PsdLayerPreviewRenderer.BoneInfo> bones,
@@ -60,6 +118,7 @@ public partial class Reanimator : EditorWindow
         PsdLayerPreviewRenderer.BoneInfo bone)
     {
         DrawBoneNameField(renderer, bones, boneIndex, bone);
+        DrawPreviewBoneRigSettings(renderer, bones, boneIndex);
 
         EditorGUI.BeginChangeCheck();
         var visible = EditorGUILayout.Toggle("Visible", bone.visible);
@@ -119,10 +178,10 @@ public partial class Reanimator : EditorWindow
     {
         using (new EditorGUILayout.HorizontalScope())
         {
-            EditorGUI.BeginChangeCheck();
-            var name = EditorGUILayout.DelayedTextField("Name", string.IsNullOrEmpty(bone.name) ? $"bone_{boneIndex}" : bone.name);
-            if (EditorGUI.EndChangeCheck() && renderer.RenameBone(boneIndex, name))
-                Repaint();
+            var rect = EditorGUILayout.GetControlRect();
+            var name = string.IsNullOrEmpty(bone.name) ? $"bone_{boneIndex}" : bone.name;
+            DrawCommitTextField(rect, new GUIContent("Name"), $"BoneEditName_{boneIndex}", name,
+                value => renderer.RenameBone(boneIndex, value));
 
             if (GUILayout.Button("R", EditorStyles.miniButton, GUILayout.Width(BoneNamePresetButtonWidth)))
                 ShowBoneNamePresetMenu(renderer, bones, boneIndex);

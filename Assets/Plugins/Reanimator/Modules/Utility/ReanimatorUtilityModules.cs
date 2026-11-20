@@ -166,7 +166,7 @@ internal sealed class ReanimatorGenerateMissingGeometryModule : ReanimatorAction
 internal sealed class ReanimatorFixSkinWeightsModule : ReanimatorActionModule
 {
     public ReanimatorFixSkinWeightsModule()
-        : base("utility.fix-skin-weights", "Utility", 50, 45, "Fix Skin Weights")
+        : base("utility.fix-skin-weights", "Utility", 50, 45, "Fix Weights", 46)
     {
     }
 
@@ -175,6 +175,14 @@ internal sealed class ReanimatorFixSkinWeightsModule : ReanimatorActionModule
         api?.ExitActiveTool();
         api?.FixSelectedSpriteSkinWeights();
     }
+}
+
+internal sealed class ReanimatorFixGeometryModule : ReanimatorActionModule
+{
+    public ReanimatorFixGeometryModule()
+        : base("utility.fix-geometry", "Utility", 50, 46, "Fix Geo", 46) { }
+
+    public override void Invoke(Reanimator.SystemApi api) => api?.ShowFixGeometryMenu();
 }
 
 internal sealed class ReanimatorKillSelectedSpriteWeightsModule : ReanimatorActionModule

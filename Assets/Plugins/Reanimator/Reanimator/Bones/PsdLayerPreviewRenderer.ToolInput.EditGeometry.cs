@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -274,7 +274,7 @@ public partial class PsdLayerPreviewRenderer
         return boundaryLoop != null && boundaryLoop.Count >= 3;
     }
 
-    private static bool TryFindNearestEditGeometryCreateVertexContourPoint(
+    private bool TryFindNearestEditGeometryCreateVertexContourPoint(
         LayerVertexData data,
         PsdCoordinateSpace coordinates,
         IReadOnlyList<int> boundaryLoop,
@@ -288,7 +288,8 @@ public partial class PsdLayerPreviewRenderer
         if (data == null || data.vertices == null || coordinates == null || boundaryLoop == null || boundaryLoop.Count < 3)
             return false;
 
-        var toView = CreateLayerVertexToViewMapper(coordinates, data, data.vertices);
+        var drawVertices = GetLayerVerticesForDraw(data);
+        var toView = CreateLayerVertexToViewMapper(coordinates, data, drawVertices);
         var found = false;
         for (var i = 0; i < boundaryLoop.Count; i++)
         {
@@ -297,16 +298,16 @@ public partial class PsdLayerPreviewRenderer
             if (aIndex < 0 || bIndex < 0 || aIndex >= data.vertices.Length || bIndex >= data.vertices.Length)
                 continue;
 
-            var a = data.vertices[aIndex];
-            var b = data.vertices[bIndex];
+            var a = toView(drawVertices[aIndex]);
+            var b = toView(drawVertices[bIndex]);
             var ab = b - a;
             var abLenSqr = ab.sqrMagnitude;
             if (abLenSqr <= 1e-8f)
                 continue;
 
-            var t = Mathf.Clamp01(Vector2.Dot(pointDoc - a, ab) / abLenSqr);
-            var projectedDoc = a + ab * t;
-            var projectedView = toView != null ? toView(projectedDoc) : projectedDoc;
+            var t = Mathf.Clamp01(Vector2.Dot(pointView - a, ab) / abLenSqr);
+            var projectedDoc = Vector2.Lerp(data.vertices[aIndex], data.vertices[bIndex], t);
+            var projectedView = a + ab * t;
             var distanceView = Vector2.Distance(pointView, projectedView);
             if (distanceView >= contourDistanceView)
                 continue;

@@ -859,6 +859,7 @@ public partial class PsdLayerPreviewRenderer
     {
         var transform = new BonePreviewTransform(bonesTreatAsWorldSpace, rotateLocalBoneOffsetsByParent);
         transform.ResolveAll(bones);
+        if(!sideAssBuildingTest)ApplyPreviewBoneRigs();
     }
 
     private void CaptureInitialBonePoseFromCurrent()

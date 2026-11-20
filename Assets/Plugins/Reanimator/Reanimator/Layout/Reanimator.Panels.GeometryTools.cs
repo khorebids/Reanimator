@@ -43,6 +43,8 @@ public partial class Reanimator : EditorWindow
         }
     }
 
+    [SerializeField] private bool elbowCorrectiveMode;
+
     private void DrawElbowToolPanel(float availableHeight)
     {
         var contentHeight = Mathf.Max(80f, availableHeight - 10f);
@@ -52,6 +54,17 @@ public partial class Reanimator : EditorWindow
             {
                 weightScroll = scrollScope.scrollPosition;
                 EditorGUILayout.LabelField("Elbow", EditorStyles.boldLabel);
+                var corrective = GUILayout.Toolbar(elbowCorrectiveMode ? 1 : 0, new[] { "Guide", "Corrective Bone" }) == 1;
+                if (corrective != elbowCorrectiveMode)
+                {
+                    elbowCorrectiveMode = corrective;
+                    Repaint();
+                }
+                if (elbowCorrectiveMode)
+                {
+                    DrawCorrectiveElbowPanel();
+                    return;
+                }
                 EditorGUILayout.HelpBox("Create an elbow guide line. Apply adds preview vertices to geometry, Cancel removes preview vertices. Both actions clear the elbow guide line.", MessageType.Info);
                 if (layerPreviewRenderer != null)
                 {
@@ -79,6 +92,40 @@ public partial class Reanimator : EditorWindow
         }
     }
 
+    private void DrawCorrectiveElbowPanel()
+    {
+        var renderer = layerPreviewRenderer;
+        if (renderer == null)
+            return;
+        EditorGUILayout.HelpBox("Select the sprite and forearm bone. Each side gets a blue anchor, five contour samples and an inner row.", MessageType.Info);
+        var selected = DrawLimbsBoneSelector(renderer);
+        var bones = renderer.Bones;
+        if (selected >= 0 && selected < bones.Count && bones[selected] != null &&
+            bones[selected].parentId >= 0 && bones[selected].parentId < bones.Count)
+            EditorGUILayout.LabelField("Parent", bones[bones[selected].parentId].name);
+        EditorGUI.BeginChangeCheck();
+        renderer.CorrectiveElbowWeightCurve = EditorGUILayout.CurveField("Helper → Child", renderer.CorrectiveElbowWeightCurve);
+        renderer.CorrectiveElbowDepth = EditorGUILayout.Slider("Inner Depth / Width", renderer.CorrectiveElbowDepth, 0.02f, 0.4f);
+        renderer.CorrectiveElbowShift = EditorGUILayout.Slider("Shift / Width", renderer.CorrectiveElbowShift, 0f, 0.5f);
+        if (EditorGUI.EndChangeCheck())
+        {
+            renderer.SaveCorrectiveElbowWeightCurve();
+            Repaint();
+        }
+        var ready = renderer.CanApplyAutomaticElbow(out var error);
+        if (!ready)
+            EditorGUILayout.HelpBox(error, MessageType.Info);
+        using (new EditorGUI.DisabledScope(!ready))
+        {
+            if (GUILayout.Button("Apply"))
+            {
+                renderer.ApplyCorrectiveElbow(out var message);
+                ShowNotification(new GUIContent(message));
+                Repaint();
+            }
+        }
+    }
+
     private void DrawLimbsToolPanel(float availableHeight)
     {
         var contentHeight = Mathf.Max(80f, availableHeight - 10f);
@@ -88,11 +135,19 @@ public partial class Reanimator : EditorWindow
             {
                 weightScroll = scrollScope.scrollPosition;
                 EditorGUILayout.LabelField("Limbs", EditorStyles.boldLabel);
-                var boneMode = GUILayout.Toolbar(limbsBoneMode ? 1 : 0, new[] { "Draw edge", "Bone" }) == 1;
-                if (limbsBoneMode != boneMode)
+                var currentMode = limbsCrossSectionMode ? 2 : limbsBoneMode ? 1 : 0;
+                var mode = GUILayout.Toolbar(currentMode, new[] { "Draw edge", "Bone", "Shoulder" });
+                if (mode != currentMode)
                 {
-                    limbsBoneMode = boneMode;
+                    layerPreviewRenderer?.CancelShoulderOutline();
+                    limbsBoneMode = mode == 1;
+                    limbsCrossSectionMode = mode == 2;
                     Repaint();
+                }
+                if (limbsCrossSectionMode)
+                {
+                    DrawLimbsShoulderPanel();
+                    return;
                 }
 
                 if (!limbsBoneMode)
@@ -197,6 +252,56 @@ public partial class Reanimator : EditorWindow
         }
     }
 
+    private void DrawLimbsShoulderPanel()
+    {
+        var renderer = layerPreviewRenderer;
+        if (renderer == null)
+            return;
+
+        EditorGUILayout.HelpBox("Select the arm bone. The helper previews the bisector of the larger angle between this bone and its parent.", MessageType.Info);
+        if (renderer.TryGetSelectedLayer(out var layer))
+            EditorGUILayout.LabelField("Sprite", layer.name);
+        var selected = DrawLimbsBoneSelector(renderer);
+        var bones = renderer.Bones;
+        if (selected < 0 || selected >= bones.Count || bones[selected] == null)
+            return;
+
+        var parent = bones[selected].parentId;
+        if (parent < 0 || parent >= bones.Count || bones[parent] == null)
+        {
+            EditorGUILayout.HelpBox("Select a bone that has a parent.", MessageType.Info);
+            return;
+        }
+        EditorGUILayout.LabelField("Parent", bones[parent].name);
+        EditorGUILayout.LabelField("Arm Width (px)", renderer.ShoulderReferenceWidth.ToString("0.##"));
+        EditorGUI.BeginChangeCheck();
+        renderer.ShoulderFanDepth = EditorGUILayout.Slider("Helper Length / a", renderer.ShoulderFanDepth, 0.02f, 0.4f);
+        renderer.ShoulderFanShiftWidth = Mathf.Max(0f, EditorGUILayout.FloatField("Maximum Shift / Arm Width", renderer.ShoulderFanShiftWidth));
+        renderer.ShoulderTransitionCurve = EditorGUILayout.CurveField(
+            new GUIContent("Shoulders → Arm", "Transition from locked attachment points (time 0) to free arm points (time 1)."),
+            renderer.ShoulderTransitionCurve);
+        EditorGUILayout.LabelField("Contour Range", "Weld: 2a; Helper: a each side");
+        renderer.ShoulderContourHelperCurve = EditorGUILayout.CurveField(
+            new GUIContent("Helper Overlay", "Time 0: helper contour point. Time 1: either end of its contour region. The remaining weight preserves the linear shoulders/arm ratio."),
+            renderer.ShoulderContourHelperCurve);
+        if (EditorGUI.EndChangeCheck()) renderer.SaveShoulderDefaults();
+        if (GUILayout.Button(renderer.ShoulderDrawing ? "Cancel Outline" : "Draw Weld Outline"))
+        {
+            renderer.ToggleShoulderOutline();
+            Repaint();
+        }
+        var ready = renderer.CanApplyShoulderFan(out var error);
+        if (!ready)
+            EditorGUILayout.HelpBox(error, MessageType.Info);
+        using (new EditorGUI.DisabledScope(!ready))
+            if (GUILayout.Button("Apply Shoulder"))
+            {
+                renderer.ApplyShoulderFan(out var message);
+                ShowNotification(new GUIContent(message));
+                Repaint();
+            }
+    }
+
     private void DrawLimbsBonePanel()
     {
         var renderer = layerPreviewRenderer;
@@ -207,6 +312,23 @@ public partial class Reanimator : EditorWindow
         if (renderer.TryGetSelectedLayer(out var layer))
             EditorGUILayout.LabelField("Sprite", layer.name);
 
+        var bones = renderer.Bones;
+        var selected = DrawLimbsBoneSelector(renderer);
+        if (selected < 0 || selected >= bones.Count || bones[selected] == null)
+            return;
+
+        var parent = bones[selected].parentId;
+        if (parent < 0 || parent >= bones.Count || bones[parent] == null)
+        {
+            EditorGUILayout.HelpBox("Select a bone that has a parent.", MessageType.Info);
+            return;
+        }
+
+        DrawLimbsBoneChildren(renderer, selected, parent, layer != null);
+    }
+
+    private int DrawLimbsBoneSelector(PsdLayerPreviewRenderer renderer)
+    {
         var bones = renderer.Bones;
         var boneLabels = new string[bones.Count + 1];
         boneLabels[0] = "Select a bone";
@@ -219,16 +341,12 @@ public partial class Reanimator : EditorWindow
             Repaint();
         }
 
-        if (selected < 0 || selected >= bones.Count || bones[selected] == null)
-            return;
+        return selected;
+    }
 
-        var parent = bones[selected].parentId;
-        if (parent < 0 || parent >= bones.Count || bones[parent] == null)
-        {
-            EditorGUILayout.HelpBox("Select a bone that has a parent.", MessageType.Info);
-            return;
-        }
-
+    private void DrawLimbsBoneChildren(PsdLayerPreviewRenderer renderer, int selected, int parent, bool hasLayer)
+    {
+        var bones = renderer.Bones;
         EditorGUILayout.LabelField("Parent", bones[parent].name);
         var children = new List<int>();
         var childLabels = new List<string>();
@@ -253,7 +371,7 @@ public partial class Reanimator : EditorWindow
             child = EditorGUILayout.Popup("Child", child, childLabels.ToArray());
         limbsChildBoneIndex = children[child];
 
-        using (new EditorGUI.DisabledScope(layer == null))
+        using (new EditorGUI.DisabledScope(!hasLayer))
         {
             if (GUILayout.Button("Apply", GUILayout.Height(22f)))
             {
@@ -272,20 +390,22 @@ public partial class Reanimator : EditorWindow
             using (var scrollScope = new EditorGUILayout.ScrollViewScope(weightScroll, GUILayout.Height(contentHeight)))
             {
                 weightScroll = scrollScope.scrollPosition;
-                EditorGUILayout.LabelField("Boob", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField("Booty", EditorStyles.boldLabel);
                 if (layerPreviewRenderer == null)
                     return;
 
                 var version = GUILayout.Toolbar(
                     layerPreviewRenderer.BoobToolVersion,
-                    new[] { "Single", "Full body" });
+                    new[] { "Single", "Full body", "Side Ass" });
                 layerPreviewRenderer.BoobToolVersion = version;
                 GUILayout.Space(4f);
 
                 if (layerPreviewRenderer.BoobToolVersion == 0)
                     DrawBoobV1Panel();
-                else
+                else if (layerPreviewRenderer.BoobToolVersion == 1)
                     DrawBoobV2Panel();
+                else
+                    DrawSideAssPanel();
             }
         }
     }

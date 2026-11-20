@@ -835,7 +835,8 @@ internal static partial class ReanimatorSelfTests
             {
                 "Repair PSD Params",
                 "Generate Missing Geometry",
-                "Fix Skin Weights",
+                "Fix Weights",
+                "Fix Geo",
                 "Refresh Cache"
             },
             labels,

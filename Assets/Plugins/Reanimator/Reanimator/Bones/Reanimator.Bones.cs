@@ -446,9 +446,9 @@ public partial class Reanimator : EditorWindow
 
         DrawBoneNameCell(nameRect, boneId, boneName, selected);
         DrawBoneRenamePresetButton(renameRect, bones, boneId, boneName);
-        var depth = DrawDepthFieldWithDrag(depthRect, bone.depth, true, boneId, null, out var depthChanged);
-        if (depthChanged)
-            layerPreviewRenderer?.SetBoneDepth(boneId, depth);
+        var renderer = layerPreviewRenderer;
+        DrawDepthFieldWithDrag(depthRect, bone.depth, true, boneId, null,
+            depth => renderer?.SetBoneDepth(boneId, depth));
 
         EditorGUI.BeginChangeCheck();
         var color = DrawBoneColorField(colorRect, bone.color);
@@ -619,7 +619,13 @@ public partial class Reanimator : EditorWindow
         if (evt == null)
             return;
 
-        if (evt.type == EventType.MouseDown && evt.button == 0 && !rect.Contains(evt.mousePosition))
+        if (evt.rawType == EventType.MouseDown && !rect.Contains(evt.mousePosition))
+        {
+            CommitBoneRename();
+            return;
+        }
+
+        if (evt.rawType == EventType.KeyDown && evt.keyCode == KeyCode.Tab)
         {
             CommitBoneRename();
             return;
@@ -717,29 +723,21 @@ public partial class Reanimator : EditorWindow
         return HandleDepthDragCore(fieldRect, true, boneId, null, ref value);
     }
 
-    private int DrawDepthFieldWithDrag(int currentValue, bool isBone, int boneId, string layerKey, out bool changed)
-    {
-        var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight, GUILayout.Width(50f));
-        return DrawDepthFieldWithDrag(rect, currentValue, isBone, boneId, layerKey, out changed);
-    }
-
-    private int DrawDepthFieldWithDrag(Rect rect, int currentValue, bool isBone, int boneId, string layerKey, out bool changed)
+    private void DrawDepthFieldWithDrag(Rect rect, int currentValue, bool isBone, int boneId, string layerKey, Action<int> apply)
     {
         var value = currentValue;
-        changed = false;
-
         var dragChanged = isBone
             ? HandleDepthDragForBone(boneId, rect, ref value)
             : HandleDepthDragForLayerByKey(layerKey, rect, ref value);
         if (dragChanged)
-            changed = true;
+            apply(value);
 
-        EditorGUI.BeginChangeCheck();
-        value = EditorGUI.DelayedIntField(rect, value);
-        if (EditorGUI.EndChangeCheck())
-            changed = true;
-
-        return value;
+        var controlName = isBone ? $"BoneDepth_{boneId}" : $"LayerDepth_{layerKey}";
+        DrawCommitTextField(rect, GUIContent.none, controlName, value.ToString(), text =>
+        {
+            if (int.TryParse(text, out var depth) && depth != value)
+                apply(depth);
+        });
     }
 
     private bool HandleDepthDragForLayerByKey(string layerKey, Rect fieldRect, ref int value)

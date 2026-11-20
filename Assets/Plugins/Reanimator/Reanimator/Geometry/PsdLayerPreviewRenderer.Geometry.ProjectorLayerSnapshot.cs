@@ -76,6 +76,7 @@ public partial class PsdLayerPreviewRenderer
             texture = source.texture,
             pixelsPerUnit = source.pixelsPerUnit,
             pivotPixels = source.pivotPixels,
+            importerMode = source.importerMode,
             vertices = CloneArray(source.vertices) ?? Array.Empty<Vector2>(),
             vertexUvs = CloneArray(source.vertexUvs) ?? Array.Empty<Vector2>(),
             triangles = CloneArray(source.triangles) ?? Array.Empty<int>(),

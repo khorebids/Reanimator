@@ -135,6 +135,16 @@ public partial class Reanimator : EditorWindow
             for (var i = 0; i < labels.Count; i++)
             {
                 var label = labels[i];
+                if (label == "Fix Weights" && i + 1 < labels.Count && labels[i + 1] == "Fix Geo")
+                {
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        if (DrawLeftToolButton(label, mutedWarning: true)) InvokeSpriteSheetRepairButton(label);
+                        if (DrawLeftToolButton("Fix Geo", mutedWarning: true)) InvokeSpriteSheetRepairButton("Fix Geo");
+                    }
+                    i++;
+                    continue;
+                }
                 if (!DrawLeftToolButton(label, mutedWarning: true))
                     continue;
 
@@ -213,7 +223,11 @@ public partial class Reanimator : EditorWindow
                 GenerateMissingGeometry();
                 break;
             case "Fix Skin Weights":
+            case "Fix Weights":
                 FixSelectedSpriteSkinWeights();
+                break;
+            case "Fix Geo":
+                ShowFixGeometryMenu();
                 break;
             case "Refresh Cache":
                 ForceCleanPreviewCache();

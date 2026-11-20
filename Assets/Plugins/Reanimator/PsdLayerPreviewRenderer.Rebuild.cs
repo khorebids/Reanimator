@@ -186,6 +186,7 @@ public partial class PsdLayerPreviewRenderer
 
     private void Rebuild(string assetPath, bool preserveUiVisibility = true)
     {
+        EnsureRuntimeState();
         CancelPreviewCacheRefresh();
         var previousPath = cachedPath;
         var previousDocumentSize = cachedDocumentSize;

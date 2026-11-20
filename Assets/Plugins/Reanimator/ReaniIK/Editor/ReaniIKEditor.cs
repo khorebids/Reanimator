@@ -4,17 +4,45 @@ using UnityEditorInternal;
 using UnityEngine;
 
 [CustomEditor(typeof(ReaniIK))]
-public sealed class ReaniIKEditor : Editor
+public sealed partial class ReaniIKEditor : Editor
 {
-    private Transform hips, spine, neck, eyes, eyelids;
+    private const float SceneControlScale = .7f;
+    private const float SceneSliderSpacing = .336f;
+    private const float FaceColumnSpacing = 2.8f;
+    private const float BodyColumnSpacing = 1.9f;
+    private const string BlackControlsKey = "Reanimator.ReaniIK.BlackSceneControls";
+    private static bool? blackControls;
+    private static GUIStyle blackControlLabel;
+    private static GUIStyle sliderResetStyle;
+    private static bool BlackSceneControls
+    {
+        get => blackControls ??= EditorPrefs.GetBool(BlackControlsKey, false);
+        set { blackControls = value; EditorPrefs.SetBool(BlackControlsKey, value); }
+    }
+    private static Color SceneControlColor(Color normal) => BlackSceneControls ? Color.black : normal;
+    private static void ControlLabel(Vector3 position, string text)
+    {
+        if (!BlackSceneControls) { Handles.Label(position, text); return; }
+        if (blackControlLabel == null)
+        {
+            blackControlLabel = new GUIStyle(EditorStyles.label);
+            foreach (var state in new[] { blackControlLabel.normal, blackControlLabel.hover, blackControlLabel.active, blackControlLabel.focused }) state.textColor = Color.black;
+        }
+        Handles.Label(position, text, blackControlLabel);
+    }
+    private Transform hips, spine, neck, belly, shoulders, rootBone;
     private float hipsHandleOffset;
+    private float faceHandleOffset;
     private int activePoseControl;
     private Transform activePoseBone;
     private Vector3 activePoseOffset;
     private ReorderableList vModeList;
+    private static readonly string[] FaceBreathingTabs = { "Mouth", "Nose" };
+    private int faceBreathingTab;
 
     private void OnEnable()
     {
+        InitializeButtControls();
         vModeList = new ReorderableList(serializedObject, serializedObject.FindProperty("v_mode"), true, true, true, true);
         vModeList.drawHeaderCallback = rect =>
         {
@@ -53,10 +81,17 @@ public sealed class ReaniIKEditor : Editor
                 case "hips": hips ??= bone; break;
                 case "spine": spine ??= bone; break;
                 case "neck": neck ??= bone; break;
-                case "eyes": eyes ??= bone; break;
-                case "eyelids": eyelids ??= bone; break;
+                case "belly": belly ??= bone; break;
+                case "shoulders": shoulders ??= bone; break;
             }
         }
+
+        rootBone = hips;
+        while (rootBone && rootBone != rig.transform &&
+               !string.Equals(rootBone.name, "root", System.StringComparison.OrdinalIgnoreCase))
+            rootBone = rootBone.parent;
+        if (rootBone == rig.transform)
+            rootBone = null;
 
         Vector3 right = rig.transform.right;
         Vector3 origin = hips ? hips.position : rig.transform.position;
@@ -67,15 +102,41 @@ public sealed class ReaniIKEditor : Editor
             float edge = Vector3.Dot(bounds.center - origin, right) +
                 Vector3.Dot(bounds.extents, absoluteRight);
             hipsHandleOffset = Mathf.Max(hipsHandleOffset, edge);
+            faceHandleOffset = Mathf.Max(faceHandleOffset,
+                Vector3.Dot(bounds.center - rig.transform.position, right) +
+                Vector3.Dot(bounds.extents, absoluteRight));
         }
     }
 
     public override void OnInspectorGUI()
     {
         serializedObject.Update();
-        DrawPropertiesExcluding(serializedObject, "leftArm", "rightArm", "leftLeg", "rightLeg", "leftArm2", "rightArm2", "v_mode");
+        EditorGUI.BeginChangeCheck();
+        bool black = EditorGUILayout.ToggleLeft(new GUIContent("Black scene controls (light background)", "Draw IK handles, lines and labels in black. This is an editor display preference."), BlackSceneControls);
+        if (EditorGUI.EndChangeCheck()) { BlackSceneControls = black; SceneView.RepaintAll(); }
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            EditorGUILayout.LabelField("Body Size", EditorStyles.boldLabel);
+            var scaleSettings = serializedObject.FindProperty("bodyScale");
+            EditorGUILayout.PropertyField(scaleSettings.FindPropertyRelative("size"));
+            EditorGUILayout.PropertyField(scaleSettings.FindPropertyRelative("distribution"), new GUIContent("Distribution"));
+            EditorGUILayout.PropertyField(scaleSettings.FindPropertyRelative("back_arms"), new GUIContent("back_arms"));
+            EditorGUILayout.PropertyField(scaleSettings.FindPropertyRelative("back_height"), new GUIContent("back_height"));
+            EditorGUILayout.LabelField("belly → spine → neck → head", EditorStyles.miniLabel);
+        }
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("breathingFrequency"));
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("breathingMultiplier"));
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("facePose"),
+            new GUIContent("Face Control Multipliers"), true);
+        DrawBreathing(serializedObject.FindProperty("breathing"));
+        DrawPropertiesExcluding(serializedObject, "bodyScale", "breathingFrequency", "breathingMultiplier", "breathing", "facePose",
+            "leftArm", "leftArmMask", "rightArm", "rightArmMask", "leftLeg", "rightLeg", "leftArm2", "rightArm2", "v_mode", "surfaceEffects");
+        DrawSideAssSettings((ReaniIK)target);
+        DrawSurfaceEffects(serializedObject.FindProperty("surfaceEffects"));
         DrawLimb(serializedObject.FindProperty("leftArm"));
+        DrawArmMask("leftArmMask", "Left Arm Mask", ((ReaniIK)target).leftArmMask);
         DrawLimb(serializedObject.FindProperty("rightArm"));
+        DrawArmMask("rightArmMask", "Right Arm Mask", ((ReaniIK)target).rightArmMask);
         DrawLimb(serializedObject.FindProperty("leftLeg"));
         DrawLimb(serializedObject.FindProperty("rightLeg"));
         DrawLimb(serializedObject.FindProperty("leftArm2"));
@@ -83,6 +144,7 @@ public sealed class ReaniIKEditor : Editor
         vModeList.DoLayoutList();
         serializedObject.ApplyModifiedProperties();
         var rig = (ReaniIK)target;
+        if (GUILayout.Button("Paint redness / surface normals")) ReaniIKSurfacePainter.Open(rig);
         if (GUILayout.Button("Reset spring motion"))
             rig.ResetSpringMotion();
         if (GUILayout.Button("Capture default limb poses"))
@@ -90,6 +152,91 @@ public sealed class ReaniIKEditor : Editor
             Undo.RecordObject(rig, "Capture default limb poses");
             rig.CaptureDefaultLimbPoses();
             PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
+        }
+    }
+
+    private static void DrawSideAssSettings(ReaniIK rig)
+    {
+        foreach (var booty in rig.GetComponentsInChildren<SideAssRig2D>(true))
+        {
+            EditorGUILayout.LabelField("Booty / " + (booty.upperLeg ? booty.upperLeg.name : booty.name), EditorStyles.boldLabel);
+            var settings = new SerializedObject(booty); settings.Update();
+            using (new EditorGUI.IndentLevelScope())
+                foreach (var name in new[] { "bendProtrusion", "protrusion", "compression", "frequency", "damping", "inertia" })
+                    EditorGUILayout.PropertyField(settings.FindProperty(name));
+            if (settings.ApplyModifiedProperties()) { EditorApplication.QueuePlayerLoopUpdate(); SceneView.RepaintAll(); }
+        }
+    }
+    private static void DrawSurfaceEffects(SerializedProperty effects)
+    {
+        effects.isExpanded = EditorGUILayout.Foldout(effects.isExpanded, "Surface Effects", true);
+        if (!effects.isExpanded) return;
+        using (new EditorGUI.IndentLevelScope())
+        {
+            EditorGUILayout.PropertyField(effects.FindPropertyRelative("maps"));
+            EditorGUILayout.PropertyField(effects.FindPropertyRelative("tremorMode"), new GUIContent("Tremor Mode"));
+            EditorGUILayout.Slider(effects.FindPropertyRelative("tremor"), 0, 1, new GUIContent("Tremor Quantity"));
+            EditorGUILayout.IntSlider(effects.FindPropertyRelative("tremorGroups"), 1, ReaniIKSurfaceEffects.MaximumTremorGroups, new GUIContent("Maximum Tremor Groups"));
+            EditorGUILayout.PropertyField(effects.FindPropertyRelative("tremorSpeed"), new GUIContent("Tremor Frequency (Hz)"));
+            EditorGUILayout.PropertyField(effects.FindPropertyRelative("outlineWidth"), new GUIContent("Tremor Peak Height", "Base peak height relative to character height."));
+            EditorGUILayout.PropertyField(effects.FindPropertyRelative("tremorWidth"), new GUIContent("Tremor Peak Width", "Peak base width multiplier. 1 preserves the original width; height is unchanged."));
+            EditorGUILayout.PropertyField(effects.FindPropertyRelative("tremorColorDepth"), new GUIContent("Tremor Color Depth (px)", "Sample color this many texture pixels inward from the opaque contour."));
+            foreach (string name in new[] { "redness", "rednessColor", "sweat", "sweatSizeMin", "sweatSizeMax", "sweatFadeIn", "sweatSpeed", "sweatSlowdown", "trailMaxLength", "trailLifetime", "darkness", "contrast", "desaturation", "showControls" })
+                EditorGUILayout.PropertyField(effects.FindPropertyRelative(name));
+        }
+    }
+
+    private void DrawBreathing(SerializedProperty breathing)
+    {
+        breathing.isExpanded = EditorGUILayout.Foldout(breathing.isExpanded, breathing.displayName, true);
+        if (!breathing.isExpanded)
+            return;
+
+        using (new EditorGUI.IndentLevelScope())
+        {
+            Draw("enabled");
+            Draw("period");
+            Draw("height");
+            Draw("spineExpansion");
+            Draw("spineRotationDegrees");
+            Draw("belly");
+            Draw("spine");
+            Draw("neck");
+            Draw("leftArm");
+            Draw("rightArm");
+            Draw("faceEnabled");
+            faceBreathingTab = GUILayout.Toolbar(faceBreathingTab, FaceBreathingTabs);
+            if (faceBreathingTab == 0)
+            {
+                Draw("mouth");
+                Draw("mouthCompression");
+                Draw("mouthLift");
+                Draw("mouthRotationDegrees");
+            }
+            else
+            {
+                Draw("nose");
+                Draw("noseExpansion");
+                Draw("noseLift");
+                Draw("noseRotationDegrees");
+            }
+        }
+
+        void Draw(string field) => EditorGUILayout.PropertyField(breathing.FindPropertyRelative(field), true);
+    }
+
+    private void DrawArmMask(string property, string label, ReaniIKArmMask settings)
+    {
+        var mask = serializedObject.FindProperty(property);
+        EditorGUILayout.LabelField(label, EditorStyles.boldLabel);
+        using (new EditorGUI.IndentLevelScope())
+        {
+            EditorGUILayout.Slider(mask.FindPropertyRelative("amount"), 0f, 1f,
+                new GUIContent("Hidden Amount", "0 = fully visible, 1 = fully hidden. Fingertips to shoulder by default."));
+            EditorGUILayout.PropertyField(mask.FindPropertyRelative("flip"), new GUIContent("Flip Direction"));
+            EditorGUILayout.PropertyField(mask.FindPropertyRelative("softness"), new GUIContent("Edge Softness"));
+            if (!string.IsNullOrEmpty(settings.Status))
+                EditorGUILayout.HelpBox(settings.Status, MessageType.Warning);
         }
     }
 
@@ -124,39 +271,295 @@ public sealed class ReaniIKEditor : Editor
         float size = HandleUtility.GetHandleSize(origin);
         Vector3 column = origin + rig.transform.right * (hipsHandleOffset + size);
         Vector3 row = rig.transform.up * (size * 2f);
-        if (rig.showHipsControl) DrawBoneControl(rig.transform, hips, column, "Hips", size);
-        if (rig.showSpineControl) DrawBoneControl(rig.transform, spine, column + row, "Spine", size, allowMove: false);
-        if (rig.showNeckControl) DrawBoneControl(rig.transform, neck, column + row * 2f, "Neck", size, allowMove: false);
-        if (rig.showEyesControl) DrawBoneControl(rig.transform, eyes, column + row * 3f, "Eyes", size, allowRotate: false);
-        if (rig.showEyelidsControl) DrawBoneControl(rig.transform, eyelids, column + row * 4f, "Eyelids", size, allowRotate: false);
+        var hipsControl = column;
+        if (!(rig.showFaceControl && rig.facePose.Head))
+            DrawSurfaceSceneControls(rig,column-rig.transform.up*(size*2.5f),size);
+        foreach (var booty in rig.GetComponentsInChildren<SideAssRig2D>(true))
+        {
+            using var bootyColor = new Handles.DrawingScope(SceneControlColor(new Color(.65f,1,.45f)));
+            var center = booty.transform.position + rig.transform.right * size * 2;
+            Undo.RecordObject(booty, "Adjust Booty controls");
+            EditorGUI.BeginChangeCheck();
+            string side = booty.upperLeg ? booty.upperLeg.name : "Side Ass";
+            booty.protrusion = DrawFaceSlider(rig, center, size, "Booty protrusion / " + side, booty.protrusion, -1, true);
+            booty.compression = DrawFaceSlider(rig, center - rig.transform.up * size * .4f, size, "Booty contact / " + side, booty.compression, 0, true);
+            if (EditorGUI.EndChangeCheck()) PrefabUtility.RecordPrefabInstancePropertyModifications(booty);
+        }
+        var spineControl = column + row;
+        var neckControl = column + row * 2f;
+        var bodyControlSize = size;
+        if (rig.showFaceControl && rig.facePose.Head)
+        {
+            var root = rig.transform;
+            var faceSize = HandleUtility.GetHandleSize(root.position);
+            var restHead = root.TransformPoint(rig.facePose.HeadRestRootPosition);
+            var faceCenter = root.position + root.up * Vector3.Dot(restHead - root.position, root.up)
+                + root.right * (faceHandleOffset + faceSize);
+            neckControl = faceCenter - root.up * (faceSize * 3.75f);
+            spineControl = faceCenter + root.right * (faceSize * FaceColumnSpacing);
+            hipsControl = spineControl - root.up * (faceSize * 2f);
+            bodyControlSize = faceSize;
+            DrawFaceControls(rig, faceCenter, faceSize);
+        }
+        if (rig.showHipsControl) DrawBoneControl(rig.transform, hips, hipsControl, "Hips", bodyControlSize);
+        if (rig.showSpineControl) DrawBoneControl(rig.transform, spine, spineControl, "Spine", bodyControlSize, allowMove: false);
+        var extraColumn = rig.transform.right * (bodyControlSize * BodyColumnSpacing);
+        if (rig.showBellyControl)
+        {
+            var bellyControl = hipsControl + extraColumn;
+            DrawBoneControl(rig.transform, belly, bellyControl, "Belly", bodyControlSize);
+            if (belly)
+                DrawBellyScale(rig, bellyControl + rig.transform.right * (bodyControlSize * 1.3f), bodyControlSize);
+        }
+        if (rig.showShouldersControl) DrawBoneControl(rig.transform, shoulders, spineControl + extraColumn, "Shoulders", bodyControlSize);
+        if (rig.showRootControl)
+            DrawBoneControl(rig.transform, rootBone,
+                hipsControl - rig.transform.up * (bodyControlSize * 2f),
+                "Root", bodyControlSize);
+        if (rig.showNeckControl) DrawBoneControl(rig.transform, neck, neckControl, "Neck", bodyControlSize, allowMove: false);
+        DrawButtControls(rig,hipsControl+extraColumn-rig.transform.up*(bodyControlSize*2f),bodyControlSize);
         DrawTarget(rig.leftArm, "Left hand", new Color(0.25f, 0.85f, 1f), isHand: true);
+        DrawArmMaskControl(rig, rig.leftArm, rig.leftArmMask, "Left");
         DrawTarget(rig.rightArm, "Right hand", new Color(1f, 0.65f, 0.2f), isHand: true);
-        DrawTarget(rig.leftLeg, "Left foot", new Color(0.25f, 0.85f, 1f));
+        DrawArmMaskControl(rig, rig.rightArm, rig.rightArmMask, "Right");
+        DrawTarget(rig.leftLeg, "Left leg", new Color(0.25f, 0.85f, 1f), isHand: true);
         DrawTarget(rig.leftArm2, "Left hand 2", new Color(0.25f, 0.85f, 1f), isHand: true);
         DrawTarget(rig.rightArm2, "Right hand 2", new Color(1f, 0.65f, 0.2f), isHand: true);
-        DrawTarget(rig.rightLeg, "Right foot", new Color(1f, 0.65f, 0.2f));
+        DrawTarget(rig.rightLeg, "Right leg", new Color(1f, 0.65f, 0.2f), isHand: true);
+    }
+
+    private static void DrawSurfaceSceneControls(ReaniIK rig,Vector3 center,float size)
+    {
+        if(!rig.surfaceEffects.showControls)return;
+        using var scope=new Handles.DrawingScope(SceneControlColor(new Color(.65f,1f,.45f)));
+        var effects=rig.surfaceEffects;
+        EditorGUI.BeginChangeCheck();
+        effects.tremor=DrawFaceSlider(rig,center,size,"Tremor groups "+effects.TargetTremorGroups,effects.tremor,0,true);
+        effects.redness=DrawFaceSlider(rig,center-rig.transform.up*size*SceneSliderSpacing,size,"Redness",effects.redness,0,true);
+        effects.sweat=DrawFaceSlider(rig,center-rig.transform.up*size*SceneSliderSpacing*2,size,"Sweat",effects.sweat,0,true);
+        effects.darkness=DrawFaceSlider(rig,center-rig.transform.up*size*SceneSliderSpacing*3,size,"Darkness",effects.darkness,0,true);
+        effects.contrast=DrawFaceSlider(rig,center-rig.transform.up*size*SceneSliderSpacing*4,size,"Contrast",effects.contrast,-1,true,3,1);
+        effects.desaturation=DrawFaceSlider(rig,center-rig.transform.up*size*SceneSliderSpacing*5,size,"Desaturation",effects.desaturation,0,true);
+        if(EditorGUI.EndChangeCheck())PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
+    }
+
+    private void DrawFaceControls(ReaniIK rig, Vector3 center, float size)
+    {
+        var pose = rig.facePose;
+        var root = rig.transform;
+        var radius = size * 0.6f * SceneControlScale;
+        using var scope = new Handles.DrawingScope(SceneControlColor(new Color(0.65f, 1f, 0.45f)));
+        Handles.DrawWireDisc(center, root.forward, radius, 3f);
+        var headLabel = center + root.right * (radius + size * .15f);
+        ControlLabel(headLabel, "Head");
+        var prefabRig = PrefabUtility.GetCorrespondingObjectFromSource(rig);
+        if (DrawCircleResetButton(headLabel, "Head", pose.Head))
+        {
+            RecordFaceControl(rig, "Reset Head control");
+            pose.headTurn = prefabRig ? prefabRig.facePose.headTurn : 0f;
+            pose.gaze = prefabRig ? prefabRig.facePose.gaze : Vector2.zero;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
+        }
+
+        EditorGUI.BeginChangeCheck();
+        pose.eyelidClosure = DrawFaceSlider(rig, center + root.up * (radius + size * 0.3f), size,
+            "Eyelid Closure", pose.eyelidClosure, -1f, pose.HasEyelids);
+        var angle = pose.headTurn * pose.headTurnDegrees;
+        var startRotation = root.rotation * Quaternion.AngleAxis(angle, Vector3.forward);
+        EditorGUI.BeginChangeCheck();
+        var rotation = Handles.Disc(startRotation, center, root.forward, radius, false, 0f);
+        if (EditorGUI.EndChangeCheck() && pose.headTurnDegrees > 0f)
+        {
+            var delta = Mathf.DeltaAngle(0f, (Quaternion.Inverse(startRotation) * rotation).eulerAngles.z);
+            RecordFaceControl(rig, "Turn Head");
+            pose.headTurn = Mathf.Clamp((angle + delta) / pose.headTurnDegrees, -1f, 1f);
+        }
+
+        if (pose.HasEyes)
+        {
+            var travel = radius * 0.65f;
+            var thumb = center + (root.right * pose.gaze.x + root.up * pose.gaze.y) * travel;
+            EditorGUI.BeginChangeCheck();
+            thumb = Handles.Slider2D(thumb, root.forward, root.right, root.up,
+                size * 0.10f * SceneControlScale, Handles.RectangleHandleCap, Vector2.zero);
+            if (EditorGUI.EndChangeCheck())
+            {
+                var offset = (thumb - center) / travel;
+                RecordFaceControl(rig, "Aim Eyes");
+                pose.gaze = Vector2.ClampMagnitude(
+                    new Vector2(Vector3.Dot(offset, root.right), Vector3.Dot(offset, root.up)), 1f);
+            }
+        }
+
+        var firstRow = center - root.up * (radius + size * 0.35f);
+        pose.upperLipHeight = DrawFaceSlider(rig, firstRow, size, "Upper Lip Height", pose.upperLipHeight, -1f, pose.HasUpperLip);
+        pose.upperLipSize = DrawFaceSlider(rig, firstRow - root.up * (size * SceneSliderSpacing), size,
+            "Upper Lip X", pose.upperLipSize, -1f, pose.HasUpperLip);
+        pose.lowerLipHeight = DrawFaceSlider(rig, firstRow - root.up * (size * SceneSliderSpacing * 2), size,
+            "Lower Lip Height", pose.lowerLipHeight, -1f, pose.HasLowerLip);
+        pose.lowerLipSize = DrawFaceSlider(rig, firstRow - root.up * (size * SceneSliderSpacing * 3), size,
+            "Lower Lip X", pose.lowerLipSize, -1f, pose.HasLowerLip);
+        pose.lipCornersHeight = DrawFaceSlider(rig, firstRow - root.up * (size * SceneSliderSpacing * 4), size,
+            "Lip Corners Height", pose.lipCornersHeight, -1f, pose.HasLipCorners);
+        var changed = EditorGUI.EndChangeCheck();
+        DrawSurfaceSceneControls(rig,firstRow-root.up*(size*SceneSliderSpacing*5),size);
+        var resetPosition = firstRow - root.up * (size * (SceneSliderSpacing*(rig.surfaceEffects.showControls?11:5)+.048f));
+        if (Handles.Button(resetPosition, root.rotation, size * 0.10f, size * 0.14f, Handles.RectangleHandleCap))
+        {
+            RecordFaceControl(rig, "Reset Face Controls");
+            pose.ResetControls();
+            changed = true;
+        }
+        ControlLabel(resetPosition + root.right * (size * 0.16f), "Reset Face");
+        if (changed)
+            PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
+    }
+
+    private static float DrawFaceSlider(ReaniIK rig, Vector3 center, float size, string label,
+        float value, float minimum, bool hasBone, float maximum=1f, float defaultValue=0f)
+    {
+        var right = rig.transform.right;
+        var distance = size * 1.2f;
+        var start = center - right * (distance * 0.5f);
+        var end = start + right * distance;
+        using var scope = new Handles.DrawingScope(SceneControlColor(hasBone ? Handles.color : new Color(0.55f, 0.6f, 0.52f)));
+        Handles.DrawLine(start, end, 2f);
+        if (minimum < 0f)
+        {
+            var tick = rig.transform.up * (size * 0.045f);
+            Handles.DrawLine(center - tick, center + tick, 2f);
+        }
+        bool reset=DrawSliderResetButton(end+right*(size*.2f),label);
+        ControlLabel(end + right * (size * 0.4f), label);
+        if(reset){RecordFaceControl(rig,"Reset "+label);return Mathf.Clamp(defaultValue,minimum,maximum);}
+        var thumb = Vector3.Lerp(start, end, Mathf.InverseLerp(minimum, maximum, value));
+        if (!hasBone)
+            return value;
+        EditorGUI.BeginChangeCheck();
+        thumb = Handles.Slider(thumb, right, size * 0.10f, Handles.RectangleHandleCap, 0f);
+        if (!EditorGUI.EndChangeCheck())
+            return value;
+        var t = Mathf.Clamp01(Vector3.Dot(thumb - start, right) / distance);
+        RecordFaceControl(rig, "Adjust " + label);
+        return Mathf.Lerp(minimum, maximum, t);
+    }
+
+    private static bool DrawSliderResetButton(Vector3 position,string label)
+    {
+        var point=HandleUtility.WorldToGUIPoint(position);
+        sliderResetStyle??=new GUIStyle(EditorStyles.miniButton){padding=new RectOffset(0,0,0,0),alignment=TextAnchor.MiddleCenter,fontSize=9};
+        Handles.BeginGUI();
+        bool clicked=GUI.Button(new Rect(point.x-7,point.y-7,14,14),new GUIContent("R","Reset "+label),sliderResetStyle);
+        Handles.EndGUI();return clicked;
+    }
+
+    private static void RecordFaceControl(ReaniIK rig, string operation)
+    {
+        Undo.RecordObject(rig, operation);
+        EditorApplication.QueuePlayerLoopUpdate();
+        SceneView.RepaintAll();
     }
 
     private void DrawBoneControl(Transform rig, Transform bone, Vector3 position, string label, float size,
         bool allowMove = true, bool allowRotate = true)
     {
         if (!bone) return;
-        using var scope = new Handles.DrawingScope(new Color(0.65f, 1f, 0.45f));
-        Handles.DrawDottedLine(bone.position, position, 4f);
-        Handles.Label(position + rig.right * size * 0.85f, label);
+        using var scope = new Handles.DrawingScope(SceneControlColor(new Color(0.65f, 1f, 0.45f)));
+        DrawCircleHeader(rig, position, HandleUtility.GetHandleSize(position) * SceneControlScale * .76f, label, bone);
         DrawPoseHandle(bone, position - bone.position, rig.forward, rig.up, true, allowMove, allowRotate);
     }
 
     private void DrawTarget(ReaniIK.Limb limb, string label, Color color, bool isHand = false)
     {
         if (!limb.enabled || !limb.IsValid) return;
-        using var scope = new Handles.DrawingScope(color);
-        Handles.DrawLine(limb.upper.position, limb.lower.position);
-        Handles.DrawLine(limb.lower.position, limb.tip.position);
-        Handles.DrawDottedLine(limb.tip.position, limb.EffectiveTarget, 4f);
-        Handles.DrawDottedLine(limb.EffectiveTarget, limb.target.position, 4f);
-        Handles.Label(limb.target.position + Vector3.up * 0.12f, label);
+        using var scope = new Handles.DrawingScope(SceneControlColor(color));
+        if (limb.lower)
+        {
+            Handles.DrawLine(limb.upper.position, limb.lower.position);
+            Handles.DrawLine(limb.lower.position, limb.tip.position);
+        }
+        else if (limb.upper != limb.tip)
+            Handles.DrawLine(limb.upper.position, limb.tip.position);
+        var labelPosition = limb.target.position + Vector3.up * 0.12f;
+        ControlLabel(labelPosition, $"{label} ({limb.tip.name})");
+        DrawCircleResetButton(labelPosition, label, limb.target);
         DrawPoseHandle(limb.target, Vector3.zero, limb.upper.forward, limb.upper.up, isHand);
+        if (isHand)
+            DrawArmFlip((ReaniIK)target, limb);
+    }
+
+    private static void DrawArmFlip(ReaniIK rig, ReaniIK.Limb limb)
+    {
+        var size = HandleUtility.GetHandleSize(limb.target.position);
+        var position = limb.target.position + rig.transform.right * (size * 1.1f);
+        var dino = limb.flipMode == ReaniIK.Limb.FlipMode.Dino;
+        var flipped = dino ? limb.invertDinoFlip : limb.flip;
+        using var scope = new Handles.DrawingScope(SceneControlColor(flipped
+            ? new Color(0.65f, 1f, 0.45f) : new Color(0.35f, 0.5f, 0.3f)));
+        if (Handles.Button(position, rig.transform.rotation, size * 0.10f, size * 0.14f, Handles.RectangleHandleCap))
+        {
+            RecordFaceControl(rig, "Flip Limb");
+            if (dino)
+                limb.invertDinoFlip = !limb.invertDinoFlip;
+            else
+                limb.flip = !limb.flip;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
+        }
+        ControlLabel(position + rig.transform.right * (size * 0.18f), "Flip");
+    }
+
+    private static void DrawArmMaskControl(ReaniIK rig, ReaniIK.Limb limb, ReaniIKArmMask mask, string side)
+    {
+        if (!limb.IsValid) return;
+        float size = HandleUtility.GetHandleSize(limb.target.position);
+        var center = limb.target.position - rig.transform.up * (size * 1.1f);
+        using var scope = new Handles.DrawingScope(SceneControlColor(new Color(0.25f, 0.85f, 1f)));
+        float previous = mask.amount;
+        mask.amount = DrawFaceSlider(rig, center, size,
+            $"{side} Arm Mask {mask.amount:P0}", previous, 0f, true,1f,1f);
+        if (mask.amount != previous)
+            PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
+        var button = center - rig.transform.up * (size * 0.35f);
+        if (Handles.Button(button, rig.transform.rotation, size * 0.08f, size * 0.12f, Handles.RectangleHandleCap))
+        {
+            RecordFaceControl(rig, "Flip " + side + " Arm Mask");
+            mask.flip = !mask.flip;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
+        }
+        ControlLabel(button + rig.transform.right * (size * 0.18f),
+            mask.flip ? "Mask: Shoulder → Fingers" : "Mask: Fingers → Shoulder");
+    }
+
+    private void DrawBellyScale(ReaniIK rig, Vector3 center, float size)
+    {
+        var up = rig.transform.up;
+        var right = rig.transform.right;
+        var length = size * 1.4f;
+        var start = center - up * (length * 0.5f);
+        var end = center + up * (length * 0.5f);
+        using var scope = new Handles.DrawingScope(SceneControlColor(new Color(0.65f, 1f, 0.45f)));
+        Handles.DrawLine(start, end, 2f);
+        var neutral = Vector3.Lerp(start, end, Mathf.InverseLerp(ReaniIKBodyScale.MinimumSize, ReaniIKBodyScale.MaximumSize, 1f));
+        Handles.DrawLine(neutral - right * (size * 0.06f), neutral + right * (size * 0.06f), 2f);
+        ControlLabel(end + right * (size * 0.12f), "1.1");
+        ControlLabel(start + right * (size * 0.12f), "0.5");
+        if(DrawSliderResetButton(center+right*(size*.4f),"Belly Scale"))
+        {
+            ResetBodySizeToPrefab(rig);
+            return;
+        }
+        var value = Mathf.Clamp(rig.bodyScale.size, ReaniIKBodyScale.MinimumSize, ReaniIKBodyScale.MaximumSize);
+        var thumb = Vector3.Lerp(start, end, Mathf.InverseLerp(ReaniIKBodyScale.MinimumSize, ReaniIKBodyScale.MaximumSize, value));
+        EditorGUI.BeginChangeCheck();
+        thumb = Handles.Slider(thumb, up, size * 0.10f, Handles.RectangleHandleCap, 0f);
+        if (!EditorGUI.EndChangeCheck())
+            return;
+        var t = Mathf.Clamp01(Vector3.Dot(thumb - start, up) / length);
+        Undo.RecordObject(rig, "Scale Body");
+        rig.bodyScale.size = Mathf.Lerp(ReaniIKBodyScale.MinimumSize, ReaniIKBodyScale.MaximumSize, t);
+        PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
+        EditorApplication.QueuePlayerLoopUpdate();
+        SceneView.RepaintAll();
     }
 
     private void DrawPoseHandle(Transform controlled, Vector3 offset, Vector3 normal, Vector3 up, bool large,
@@ -171,7 +574,7 @@ public sealed class ReaniIKEditor : Editor
         Quaternion startRotation = controlled.rotation;
         Vector3 position = startPosition;
         Quaternion rotation = startRotation;
-        float size = HandleUtility.GetHandleSize(position);
+        float size = HandleUtility.GetHandleSize(position) * SceneControlScale;
         bool rotateOnly = allowRotate && Tools.current == Tool.Rotate;
         if (allowRotate && (large || rotateOnly || !allowMove))
         {

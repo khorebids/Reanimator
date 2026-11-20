@@ -23,6 +23,8 @@ public partial class Reanimator : EditorWindow
 
         using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
         {
+            if (GUILayout.Toggle(previewMode == PreviewMode.Reanimate, "Reanimate", EditorStyles.toolbarButton, GUILayout.Width(90f)))
+                SetPreviewMode(PreviewMode.Reanimate);
             if (GUILayout.Toggle(previewMode == PreviewMode.Skel, "Skinning Editor", EditorStyles.toolbarButton, GUILayout.Width(120f)))
                 SetPreviewMode(PreviewMode.Skel);
             if (GUILayout.Toggle(previewMode == PreviewMode.Sprite, "Sprite Sheet", EditorStyles.toolbarButton, GUILayout.Width(100f)))
@@ -31,6 +33,8 @@ public partial class Reanimator : EditorWindow
                 SetPreviewMode(PreviewMode.Comfimator);
             if (GUILayout.Toggle(previewMode == PreviewMode.AllInGraph, "ALLIN Graph", EditorStyles.toolbarButton, GUILayout.Width(100f)))
                 SetPreviewMode(PreviewMode.AllInGraph);
+            if (GUILayout.Toggle(previewMode == PreviewMode.SurfaceMasks, "Surface Masks", EditorStyles.toolbarButton, GUILayout.Width(105f)))
+                SetPreviewMode(PreviewMode.SurfaceMasks);
             GUILayout.FlexibleSpace();
             using (new EditorGUI.DisabledScope(!TryValidateAllInPreflight(out _)))
             {
@@ -52,6 +56,13 @@ public partial class Reanimator : EditorWindow
         if (Event.current.type == EventType.Repaint)
             cachedToolbarRect = toolbarRect;
 
+        if (previewMode == PreviewMode.SurfaceMasks)
+        {
+            DrawSurfaceMasksWorkspace();
+            DrawExternalBlockingProgressOverlay();
+            return;
+        }
+
         if (previewMode == PreviewMode.AllInGraph)
         {
             if (ReanimatorExternalPanelRegistry.TryGet("Comfimator", out var panel) &&
@@ -59,6 +70,13 @@ public partial class Reanimator : EditorWindow
                 graph.DrawAllInGraph(this);
             else
                 EditorGUILayout.HelpBox("Comfimator is unavailable.", MessageType.Info);
+            DrawExternalBlockingProgressOverlay();
+            return;
+        }
+
+        if (previewMode == PreviewMode.Reanimate)
+        {
+            DrawReanimateWorkspace();
             DrawExternalBlockingProgressOverlay();
             return;
         }
@@ -423,6 +441,12 @@ public partial class Reanimator : EditorWindow
 
     private bool TryCenterPreviewOnLayer(PsdLayerPreviewRenderer.LayerInfo layer)
     {
+        if (previewMode == PreviewMode.Reanimate && layer != null)
+        {
+            reanimateDiagnosticLayer = layer;
+            Repaint();
+            return true;
+        }
         if (previewNavigator == null || layerPreviewRenderer == null || layer == null)
             return false;
         if (cachedPreviewRect.width <= 0f || cachedPreviewRect.height <= 0f)

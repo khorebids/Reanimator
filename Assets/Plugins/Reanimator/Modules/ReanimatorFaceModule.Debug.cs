@@ -3,7 +3,7 @@ internal sealed partial class ReanimatorFaceModule : IReanimatorDebugPreviewModu
 {
     public void DrawDebugPreviewOverlay(Reanimator.SystemApi api, ReanimatorPreviewContext context)
     {
-        ReanimatorToolDebugOverlay.Draw(context, "Face", "layout=Eyes/Mouth/Earrings\nautomation=placeholder", ReanimatorDebugPreviewGui.Neutral);
+        ReanimatorToolDebugOverlay.Draw(context, "Face", "layout=Eyes/Breathing & Talking", ReanimatorDebugPreviewGui.Neutral);
     }
 }
 #endif

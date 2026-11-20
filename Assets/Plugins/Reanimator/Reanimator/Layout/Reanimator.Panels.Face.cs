@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
@@ -7,6 +8,8 @@ public partial class Reanimator : EditorWindow
     private const string EyelidsBoneName = "eyelids";
     private const string HeadBoneName = "head";
     private const float EyelidsLengthRatio = 1f / 6f;
+    [SerializeField] private float lowerLipMaxHeadWeight = 0.6f;
+    [SerializeField] private float upperLipMaxHeadWeight = 0.4f;
 
     private void DrawFaceToolPanel(float availableHeight)
     {
@@ -18,6 +21,7 @@ public partial class Reanimator : EditorWindow
             var nextIndex = GUILayout.Toolbar(clampedIndex, FaceSubtoolLabels, GUILayout.Height(22f));
             if (nextIndex != faceSubtoolIndex)
             {
+                layerPreviewRenderer?.CancelFaceMouthStroke();
                 faceSubtoolIndex = nextIndex;
                 faceScroll = Vector2.zero;
                 Repaint();
@@ -28,10 +32,131 @@ public partial class Reanimator : EditorWindow
             {
                 faceScroll = scrollScope.scrollPosition;
                 EditorGUILayout.LabelField(FaceSubtoolLabels[faceSubtoolIndex], EditorStyles.boldLabel);
+                if (!EnsureFaceSpriteSelection())
+                    return;
                 if (faceSubtoolIndex == 0)
                     DrawFaceEyesPanel();
                 else
-                    DrawFaceSubtoolPlaceholder();
+                    DrawFaceMouthPanel();
+            }
+        }
+    }
+
+    private void TrySelectFaceSpriteOnEntry()
+    {
+        var renderer = layerPreviewRenderer;
+        if (renderer == null || renderer.TryGetSelectedLayer(out _))
+            return;
+
+        foreach (var layer in renderer.Layers)
+        {
+            if (IsFaceSpriteCandidate(layer) &&
+                string.Equals(layer.name, "face", System.StringComparison.OrdinalIgnoreCase))
+            {
+                renderer.SelectLayer(layer);
+                return;
+            }
+        }
+    }
+
+    private static bool IsFaceSpriteCandidate(PsdLayerPreviewRenderer.LayerInfo layer) =>
+        layer != null && layer.sourceRect.width > 0f && layer.sourceRect.height > 0f;
+
+    private bool EnsureFaceSpriteSelection()
+    {
+        var renderer = layerPreviewRenderer;
+        if (renderer == null)
+        {
+            EditorGUILayout.HelpBox("No sprites available.", MessageType.Info);
+            return false;
+        }
+        if (renderer.TryGetSelectedLayer(out _))
+            return true;
+
+        var candidates = new List<PsdLayerPreviewRenderer.LayerInfo>();
+        foreach (var layer in renderer.Layers)
+        {
+            if (IsFaceSpriteCandidate(layer))
+                candidates.Add(layer);
+        }
+
+        if (candidates.Count == 0)
+        {
+            EditorGUILayout.HelpBox("No sprites available.", MessageType.Info);
+            return false;
+        }
+
+        var labels = new string[candidates.Count + 1];
+        labels[0] = "Select a sprite";
+        for (var i = 0; i < candidates.Count; i++)
+            labels[i + 1] = candidates[i].name;
+        var selected = EditorGUILayout.Popup("Sprite", 0, labels);
+        if (selected > 0)
+        {
+            renderer.SelectLayer(candidates[selected - 1]);
+            Repaint();
+        }
+        return false;
+    }
+
+    private void DrawFaceMouthPanel()
+    {
+        var renderer = layerPreviewRenderer;
+        if (renderer == null || !renderer.TryGetSelectedLayer(out _))
+        {
+            EditorGUILayout.HelpBox("Select the face sprite.", MessageType.Info);
+            return;
+        }
+
+        var labels = PsdLayerPreviewRenderer.FaceMouthContourLabels;
+        for (var i = 0; i < labels.Length; i++)
+        {
+            var drawing = renderer.FaceMouthDrawingContour == i;
+            var label = drawing ? "Cancel " + labels[i] :
+                (renderer.HasFaceMouthContour(i) ? "Redraw " : "Draw ") + labels[i];
+            if (!GUILayout.Button(label))
+                continue;
+            renderer.CancelFaceMouthStroke();
+            if (!drawing)
+                renderer.BeginFaceMouthContour(i);
+            Repaint();
+        }
+
+        lowerLipMaxHeadWeight = EditorGUILayout.Slider(
+            new GUIContent("Lower Lip Max Head Weight", "Head weight at the farthest lower lip vertex."),
+            lowerLipMaxHeadWeight, 0f, 1f);
+        upperLipMaxHeadWeight = EditorGUILayout.Slider(
+            new GUIContent("Upper Lip Max Head Weight", "Head weight at the farthest upper lip vertex."),
+            upperLipMaxHeadWeight, 0f, 1f);
+        EditorGUI.BeginChangeCheck();
+        renderer.NoseOuterOffset = EditorGUILayout.Slider(
+            new GUIContent("Nose Outer Offset X", "Horizontal offset in half-widths of the outer contour."),
+            renderer.NoseOuterOffset, -1f, 1f);
+        renderer.NoseOuterOffsetY = EditorGUILayout.Slider(
+            new GUIContent("Nose Outer Offset Y", "Vertical offset in half-heights of the outer contour."),
+            renderer.NoseOuterOffsetY, -1f, 1f);
+        if (EditorGUI.EndChangeCheck())
+            Repaint();
+
+        var error = renderer.GetFaceMouthApplyError();
+        if (error != null)
+            EditorGUILayout.HelpBox(error, renderer.GetFaceMouthContourError() == null ? MessageType.Info : MessageType.Error);
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            if (GUILayout.Button("Clear"))
+            {
+                renderer.ClearFaceMouthContours();
+                Repaint();
+                return;
+            }
+            using (new EditorGUI.DisabledScope(error != null || renderer.FaceMouthDrawingContour >= 0))
+            {
+                if (GUILayout.Button("Apply"))
+                {
+                    renderer.TryApplyFaceMouth(lowerLipMaxHeadWeight, upperLipMaxHeadWeight, out var message);
+                    ShowNotification(new GUIContent(message));
+                    Repaint();
+                }
             }
         }
     }
@@ -273,19 +398,5 @@ public partial class Reanimator : EditorWindow
         EditorGUILayout.LabelField(message, style);
     }
 
-    private static void DrawFaceSubtoolPlaceholder()
-    {
-        EditorGUILayout.HelpBox(
-            "Settings for this Face subtool will be added here.",
-            MessageType.Info);
-        DrawFaceAutomationPlaceholder();
-    }
-
-    private static void DrawFaceAutomationPlaceholder()
-    {
-        GUILayout.Space(8f);
-        using (new EditorGUI.DisabledScope(true))
-            GUILayout.Button("Automation", GUILayout.Height(28f));
-    }
 }
 #endif

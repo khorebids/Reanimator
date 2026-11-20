@@ -8,6 +8,8 @@ public sealed class SpringBoneSimulation2D
         public Transform bone;
         public Vector3 basePosition;
         public Vector3 appliedPosition;
+        public Quaternion baseRotation;
+        public Quaternion appliedRotation;
         public Vector3 previousTarget;
         public Vector3 offset;
         public Vector3 velocity;
@@ -15,6 +17,10 @@ public sealed class SpringBoneSimulation2D
     }
 
     private BoneState[] states;
+    private readonly bool rotationOnly;
+
+    public SpringBoneSimulation2D(bool rotationOnly = false) => this.rotationOnly = rotationOnly;
+
     public void RestorePose()
     {
         if (states == null) return;
@@ -22,7 +28,12 @@ public sealed class SpringBoneSimulation2D
         {
             if (!state.bone || !state.applied) continue;
             // Keep an externally edited or animated pose as the new base pose.
-            if ((state.bone.localPosition - state.appliedPosition).sqrMagnitude < 1e-10f)
+            if (rotationOnly)
+            {
+                if (state.bone.localRotation == state.appliedRotation)
+                    state.bone.localRotation = state.baseRotation;
+            }
+            else if ((state.bone.localPosition - state.appliedPosition).sqrMagnitude < 1e-10f)
                 state.bone.localPosition = state.basePosition;
             state.applied = false;
         }
@@ -34,7 +45,8 @@ public sealed class SpringBoneSimulation2D
         states = null;
     }
 
-    public void Simulate(Transform[] bones, float frequency, float damping, float inertia, float maximumOffset, float deltaTime)
+    public void Simulate(Transform[] bones, float frequency, float damping, float inertia, float maximumOffset, float deltaTime,
+        float gravitySag = 0f)
     {
         if (bones == null) return;
         if (states == null || states.Length != bones.Length)
@@ -42,7 +54,7 @@ public sealed class SpringBoneSimulation2D
             RestorePose();
             states = new BoneState[bones.Length];
             for (int i = 0; i < bones.Length; i++)
-                states[i] = new BoneState { bone = bones[i], previousTarget = bones[i] ? bones[i].position : Vector3.zero };
+                states[i] = new BoneState { bone = bones[i], previousTarget = bones[i] ? GetTarget(bones[i]) : Vector3.zero };
         }
 
         float dt = Mathf.Clamp(deltaTime, 0f, 0.05f);
@@ -59,7 +71,7 @@ public sealed class SpringBoneSimulation2D
             if (!state.bone || !state.bone.parent) continue;
             var parent = state.bone.parent;
             state.basePosition = state.bone.localPosition;
-            Vector3 target = state.bone.position;
+            Vector3 target = GetTarget(state.bone);
             Vector3 motion = target - state.previousTarget;
             state.previousTarget = target;
             // Long editor stalls and teleports should establish a fresh equilibrium.
@@ -70,10 +82,18 @@ public sealed class SpringBoneSimulation2D
             }
             else state.offset -= motion * inertia;
 
+            var equilibrium = Vector3.zero;
+            if (!rotationOnly && gravitySag > 0f)
+            {
+                var down = parent.InverseTransformVector(Vector3.down);
+                down.z = 0f;
+                equilibrium = parent.TransformVector(down.normalized * Mathf.Min(gravitySag, maximumOffset));
+            }
+
             float omega = 2f * Mathf.PI * Mathf.Clamp(frequency * (1f + i * 0.035f), 0.1f, 20f);
             for (int j = 0; j < steps; j++)
             {
-                state.velocity += (-omega * omega * state.offset - 2f * damping * omega * state.velocity) * step;
+                state.velocity += (-omega * omega * (state.offset - equilibrium) - 2f * damping * omega * state.velocity) * step;
                 state.offset += state.velocity * step;
             }
             Vector3 localOffset = parent.InverseTransformVector(state.offset);
@@ -82,9 +102,27 @@ public sealed class SpringBoneSimulation2D
             if ((limited - localOffset).sqrMagnitude > 1e-10f)
                 state.velocity = Vector3.zero;
             state.offset = parent.TransformVector(limited);
-            state.appliedPosition = state.basePosition + limited;
-            state.bone.localPosition = state.appliedPosition;
+            if (rotationOnly)
+            {
+                state.baseRotation = state.bone.localRotation;
+                Vector2 restDirection = state.baseRotation * Vector3.down;
+                float angle = Vector2.SignedAngle(restDirection, restDirection + (Vector2)limited);
+                state.appliedRotation = Quaternion.AngleAxis(angle, Vector3.forward) * state.baseRotation;
+                state.bone.localRotation = state.appliedRotation;
+            }
+            else
+            {
+                state.appliedPosition = state.basePosition + limited;
+                state.bone.localPosition = state.appliedPosition;
+            }
             state.applied = true;
         }
+    }
+
+    // The virtual tip responds to both pivot translation and parent rotation.
+    private Vector3 GetTarget(Transform bone)
+    {
+        if (!rotationOnly || !bone.parent) return bone.position;
+        return bone.parent.TransformPoint(bone.localPosition + bone.localRotation * Vector3.down);
     }
 }

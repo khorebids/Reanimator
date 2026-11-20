@@ -165,42 +165,46 @@ public partial class PsdLayerPreviewRenderer
 
     private bool TryRetriangulateWithDirectFallback(LayerVertexData data)
     {
-        if (data == null || data.vertices == null || data.vertices.Length < 3 || data.boundaryEdgePairs == null || data.boundaryEdgePairs.Length < 6)
+        if (data?.vertices == null || data.vertices.Length < 3 || data.boundaryEdgePairs == null || data.boundaryEdgePairs.Length < 6)
             return false;
-
-        var boundaryEdges = new List<Vector2Int>(data.boundaryEdgePairs.Length / 2);
+        // Generated meshes may contain coincident vertices with distinct weights.
+        // Deduplicate only the tessellator input, preserving the original arrays.
+        var origin = data.vertices[0];
+        var sourceVertices = new List<Vector2>();
+        var sourceToOriginal = new List<int>();
+        var originalToSource = new int[data.vertices.Length];
+        for (var i = 0; i < data.vertices.Length; i++)
+        {
+            var point = data.vertices[i] - origin;
+            var index = sourceVertices.FindIndex(v => (v - point).sqrMagnitude <= 1e-8f);
+            if (index < 0)
+            {
+                index = sourceVertices.Count;
+                sourceVertices.Add(point);
+                sourceToOriginal.Add(i);
+            }
+            originalToSource[i] = index;
+        }
+        var boundaryEdges = new List<Vector2Int>();
+        var keys = new HashSet<ulong>();
         for (var i = 0; i + 1 < data.boundaryEdgePairs.Length; i += 2)
         {
-            var a = data.boundaryEdgePairs[i];
-            var b = data.boundaryEdgePairs[i + 1];
-            if (a < 0 || b < 0 || a >= data.vertices.Length || b >= data.vertices.Length || a == b)
-                continue;
-            boundaryEdges.Add(new Vector2Int(a, b));
+            var a = data.boundaryEdgePairs[i]; var b = data.boundaryEdgePairs[i + 1];
+            if (a < 0 || b < 0 || a >= data.vertices.Length || b >= data.vertices.Length) continue;
+            a = originalToSource[a]; b = originalToSource[b];
+            if (a != b && keys.Add(MakeEdgeKey(a, b))) boundaryEdges.Add(new Vector2Int(a, b));
         }
-        if (boundaryEdges.Count < 3)
-            return false;
-
-        var sourceVertices = new List<Vector2>(data.vertices);
-        if (!TryTriangulateWithUnityTessellation(sourceVertices, boundaryEdges, 0, out var triangulatedVertices, out var triangles, out _))
+        if (boundaryEdges.Count < 3 || !TryTriangulateWithUnityTessellation(sourceVertices, boundaryEdges, 0,
+                out var triangulatedVertices, out var triangles, out _))
             return false;
         triangles = SanitizeTriangles(triangles, triangulatedVertices.Length);
-        if (triangles.Length < 3 || triangulatedVertices.Length != data.vertices.Length)
+        // Collinear or redundant points may legitimately be omitted by Unity.
+        if (triangles.Length < 3 || !TryMapTriangulatedSubsetToSource(sourceVertices, triangulatedVertices, out var triToSource))
             return false;
-        if (!TryBuildVertexRemap(sourceVertices, triangulatedVertices, out var sourceToTri))
-            return false;
-        if (!TryBuildInversePermutation(sourceToTri, triangulatedVertices.Length, out var triToSource))
-            return false;
-
-        var remappedTriangles = new int[triangles.Length];
+        var remapped = new int[triangles.Length];
         for (var i = 0; i < triangles.Length; i++)
-        {
-            var triIndex = triangles[i];
-            if (triIndex < 0 || triIndex >= triToSource.Length)
-                return false;
-            remappedTriangles[i] = triToSource[triIndex];
-        }
-
-        data.triangles = SanitizeTriangles(remappedTriangles, data.vertices.Length);
+            remapped[i] = sourceToOriginal[triToSource[triangles[i]]];
+        data.triangles = SanitizeTriangles(remapped, data.vertices.Length);
         return data.triangles.Length >= 3;
     }
 }

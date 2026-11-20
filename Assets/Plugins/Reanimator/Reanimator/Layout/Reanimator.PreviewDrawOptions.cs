@@ -70,14 +70,25 @@ public partial class Reanimator : EditorWindow
             radiusCullRadius,
             radiusCullRemoveContourVertices,
             radiusCullRemoveInnerVertices,
-            limbsUseRadiusCull && !limbsBoneMode,
+            limbsUseRadiusCull && !limbsBoneMode && !limbsCrossSectionMode,
             jointUseRadiusCull,
             jointCPairOffset,
             jointLongPoints,
             jointStartLongPointsOffset,
             jointEndLongPointsOffset);
 
-        if (options.Tools.Limb && limbsBoneMode)
+        if (options.Tools.Elbow && elbowCorrectiveMode)
+        {
+            options.Tools.Elbow = false;
+            options.Tools.ElbowCorrective = true;
+        }
+
+        if (options.Tools.Limb && limbsCrossSectionMode)
+        {
+            options.Tools.Limb = false;
+            options.Tools.LimbCrossSection = true;
+        }
+        else if (options.Tools.Limb && limbsBoneMode)
         {
             options.Tools.Limb = false;
             options.Tools.LimbBone = true;
@@ -110,6 +121,14 @@ public partial class Reanimator : EditorWindow
             options.ActivePreviewModule = null;
             options.ActiveDebugPreviewModule = null;
             options.Tools.Clear();
+        }
+        if (!spriteMode && !comfimatorMode && bottomToolMode == ReanimatorToolMode.Skeletron)
+        {
+            options.DrawBones = false;
+            options.AllowSpriteSelection = false;
+            options.DeformSpritesWithBonePose = false;
+            options.SuppressGeometryOverlay = true;
+            options.TemporarilyHiddenLayers = ReanimatorSkeletronModule.GetHiddenLayers(Api);
         }
 
         return options;

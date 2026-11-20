@@ -61,7 +61,7 @@ internal sealed partial class ReanimatorJointModule : ReanimatorToolModeModule
 internal sealed partial class ReanimatorBoobModule : ReanimatorToolModeModule
 {
     public ReanimatorBoobModule()
-        : base("geometry.boob", "Geometry", 30, 50, "Boob", ReanimatorToolMode.Boob, 30, (api, height) => api?.DrawBoobSettings(height))
+        : base("geometry.boob", "Geometry", 30, 50, "Booty", ReanimatorToolMode.Boob, 30, (api, height) => api?.DrawBoobSettings(height))
     {
     }
 

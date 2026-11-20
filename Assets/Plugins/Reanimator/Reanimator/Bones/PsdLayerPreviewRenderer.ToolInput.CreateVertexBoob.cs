@@ -19,6 +19,11 @@ public partial class PsdLayerPreviewRenderer
         PsdCoordinateSpace coordinates,
         IReadOnlyList<LayerInfo> drawList)
     {
+        if (BoobToolVersion == 2)
+        {
+            HandleSideAssInput(localRect, coordinates);
+            return;
+        }
         if (BoobToolVersion == 1)
         {
             HandleBoobV2Input(localRect, coordinates, drawList);
@@ -115,7 +120,8 @@ public partial class PsdLayerPreviewRenderer
     private void HandleBoobV2Input(
         Rect localRect,
         PsdCoordinateSpace coordinates,
-        IReadOnlyList<LayerInfo> drawList)
+        IReadOnlyList<LayerInfo> drawList,
+        LayerInfo fixedTarget = null)
     {
         var e = Event.current;
         if (e == null || drawList == null)
@@ -138,20 +144,26 @@ public partial class PsdLayerPreviewRenderer
         var mouseDoc = coordinates.ViewToDocument(e.mousePosition);
         if (e.type == EventType.MouseDown)
         {
+            if (GUIUtility.hotControl != 0)
+                return;
+            if (fixedTarget != null)
+                boobV2LayerStableKey = BuildKey(fixedTarget.name, fixedTarget.layerId);
             if (BoobV2Selection <= 1)
             {
                 RegisterUndo(BoobV2Selection == 0 ? "Set Left Boob V2 Target" : "Set Right Boob V2 Target");
-                LayerInfo targetLayer = null;
-                if (!TryFindBoobConstraintLayer(mouseDoc, out targetLayer) || targetLayer == null)
-                    targetLayer = FindTopLayerAt(mouseDoc, drawList);
-                if (targetLayer != null)
+                if (fixedTarget == null)
                 {
-                    var selectionKey = BuildSelectionKey(targetLayer);
-                    var stableKey = BuildKey(targetLayer.name, targetLayer.layerId);
-                    if (!string.IsNullOrEmpty(selectionKey))
-                        selectedLayerSelectionKey = selectionKey;
-                    if (!string.IsNullOrEmpty(stableKey))
-                        boobV2LayerStableKey = stableKey;
+                    if (!TryFindBoobConstraintLayer(mouseDoc, out var targetLayer) || targetLayer == null)
+                        targetLayer = FindTopLayerAt(mouseDoc, drawList);
+                    if (targetLayer != null)
+                    {
+                        var selectionKey = BuildSelectionKey(targetLayer);
+                        var stableKey = BuildKey(targetLayer.name, targetLayer.layerId);
+                        if (!string.IsNullOrEmpty(selectionKey))
+                            selectedLayerSelectionKey = selectionKey;
+                        if (!string.IsNullOrEmpty(stableKey))
+                            boobV2LayerStableKey = stableKey;
+                    }
                 }
 
                 boobV2ActiveTarget = BoobV2Selection;
@@ -239,6 +251,13 @@ public partial class PsdLayerPreviewRenderer
             }
         }
 
+        CancelBoobV2Interaction();
+    }
+
+    internal void CancelBoobV2Interaction()
+    {
+        if (boobControlId != 0 && GUIUtility.hotControl == boobControlId)
+            GUIUtility.hotControl = 0;
         boobIsDragging = false;
         boobControlId = 0;
         boobV2ActiveTarget = -1;
@@ -275,7 +294,7 @@ public partial class PsdLayerPreviewRenderer
             smoothedContour = rebuilt;
     }
 
-    private static List<Vector2> BuildSmoothedClosedBoobV2Contour(
+    internal static List<Vector2> BuildSmoothedClosedBoobV2Contour(
         IReadOnlyList<Vector2> source,
         int smoothingPasses,
         int targetPointCount)
