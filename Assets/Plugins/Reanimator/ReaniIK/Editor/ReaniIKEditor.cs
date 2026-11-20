@@ -9,7 +9,8 @@ public sealed partial class ReaniIKEditor : Editor
     private const float SceneControlScale = .7f;
     private const float SceneSliderSpacing = .336f;
     private const float FaceColumnSpacing = 2.8f;
-    private const float BodyColumnSpacing = 1.9f;
+    private const float BodyColumnSpacing = 1.3f;
+    private const float BodyRowSpacing = 1.4f;
     private const string BlackControlsKey = "Reanimator.ReaniIK.BlackSceneControls";
     private static bool? blackControls;
     private static GUIStyle blackControlLabel;
@@ -39,6 +40,8 @@ public sealed partial class ReaniIKEditor : Editor
     private ReorderableList vModeList;
     private static readonly string[] FaceBreathingTabs = { "Mouth", "Nose" };
     private int faceBreathingTab;
+    [SerializeField] private bool sceneControlsExpanded;
+    [SerializeField] private bool bodySizeExpanded,leftArmMaskExpanded,rightArmMaskExpanded;
 
     private void OnEnable()
     {
@@ -74,6 +77,7 @@ public sealed partial class ReaniIKEditor : Editor
         };
 
         var rig = (ReaniIK)target;
+        LoadBodyControlsLayout(rig);
         foreach (var bone in rig.GetComponentsInChildren<Transform>(true))
         {
             if(bone.GetComponent<SpriteRenderer>())continue;
@@ -115,23 +119,34 @@ public sealed partial class ReaniIKEditor : Editor
         EditorGUI.BeginChangeCheck();
         bool black = EditorGUILayout.ToggleLeft(new GUIContent("Black scene controls (light background)", "Draw IK handles, lines and labels in black. This is an editor display preference."), BlackSceneControls);
         if (EditorGUI.EndChangeCheck()) { BlackSceneControls = black; SceneView.RepaintAll(); }
+        bodySizeExpanded=EditorGUILayout.Foldout(bodySizeExpanded,"Body Size",true);
+        if(bodySizeExpanded)
         using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
         {
-            EditorGUILayout.LabelField("Body Size", EditorStyles.boldLabel);
             var scaleSettings = serializedObject.FindProperty("bodyScale");
             EditorGUILayout.PropertyField(scaleSettings.FindPropertyRelative("size"));
+            EditorGUILayout.PropertyField(scaleSettings.FindPropertyRelative("leftArmSize"));
+            EditorGUILayout.PropertyField(scaleSettings.FindPropertyRelative("rightArmSize"));
             EditorGUILayout.PropertyField(scaleSettings.FindPropertyRelative("distribution"), new GUIContent("Distribution"));
             EditorGUILayout.PropertyField(scaleSettings.FindPropertyRelative("back_arms"), new GUIContent("back_arms"));
             EditorGUILayout.PropertyField(scaleSettings.FindPropertyRelative("back_height"), new GUIContent("back_height"));
             EditorGUILayout.LabelField("belly → spine → neck → head", EditorStyles.miniLabel);
         }
-        EditorGUILayout.PropertyField(serializedObject.FindProperty("breathingFrequency"));
-        EditorGUILayout.PropertyField(serializedObject.FindProperty("breathingMultiplier"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("facePose"),
             new GUIContent("Face Control Multipliers"), true);
-        DrawBreathing(serializedObject.FindProperty("breathing"));
         DrawPropertiesExcluding(serializedObject, "bodyScale", "breathingFrequency", "breathingMultiplier", "breathing", "facePose",
-            "leftArm", "leftArmMask", "rightArm", "rightArmMask", "leftLeg", "rightLeg", "leftArm2", "rightArm2", "v_mode", "surfaceEffects");
+            "leftArm", "leftArmMask", "rightArm", "rightArmMask", "leftLeg", "rightLeg", "leftArm2", "rightArm2", "v_mode", "surfaceEffects", "softContour", "springRotation",
+            "showHipsControl", "showRootControl", "showSpineControl", "showBellyControl", "showShouldersControl", "showNeckControl", "showFaceControl", "showButtControl");
+        sceneControlsExpanded=EditorGUILayout.Foldout(sceneControlsExpanded,"Scene Controls",true);
+        if(sceneControlsExpanded)
+        {
+            using(new EditorGUI.IndentLevelScope())
+                foreach(var name in new[]{"showHipsControl","showRootControl","showSpineControl","showBellyControl","showShouldersControl","showNeckControl","showFaceControl","showButtControl"})
+                {
+                    var property=serializedObject.FindProperty(name);
+                    property.boolValue=EditorGUILayout.Toggle(new GUIContent(property.displayName,property.tooltip),property.boolValue);
+                }
+        }
         DrawSideAssSettings((ReaniIK)target);
         DrawSurfaceEffects(serializedObject.FindProperty("surfaceEffects"));
         DrawLimb(serializedObject.FindProperty("leftArm"));
@@ -144,13 +159,29 @@ public sealed partial class ReaniIKEditor : Editor
         DrawLimb(serializedObject.FindProperty("rightArm2"));
         vModeList.DoLayoutList();
         serializedObject.ApplyModifiedProperties();
+        ((ReaniIK)target).SynchronizeAnimationControls();
+        // These simulation settings remain editable with Undo, but never enter
+        // AnimationWindow's property-diff recording pipeline.
+        serializedObject.Update();
+        EditorGUI.BeginChangeCheck();
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("breathingFrequency"));
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("breathingMultiplier"));
+        DrawBreathing(serializedObject.FindProperty("breathing"));
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("softContour"), true);
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("springRotation"), true);
+        if(EditorGUI.EndChangeCheck())
+        {
+            RecordSceneControl(target,"Adjust breathing / SC / SCR",false);
+            serializedObject.ApplyModifiedPropertiesWithoutUndo();
+            PrefabUtility.RecordPrefabInstancePropertyModifications(target);
+        }
         var rig = (ReaniIK)target;
         if (GUILayout.Button("Paint redness / surface normals")) ReaniIKSurfacePainter.Open(rig);
         if (GUILayout.Button("Reset spring motion"))
             rig.ResetSpringMotion();
         if (GUILayout.Button("Capture default limb poses"))
         {
-            Undo.RecordObject(rig, "Capture default limb poses");
+            RecordSceneControl(rig, "Capture default limb poses", false);
             rig.CaptureDefaultLimbPoses();
             PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
         }
@@ -229,7 +260,10 @@ public sealed partial class ReaniIKEditor : Editor
     private void DrawArmMask(string property, string label, ReaniIKArmMask settings)
     {
         var mask = serializedObject.FindProperty(property);
-        EditorGUILayout.LabelField(label, EditorStyles.boldLabel);
+        bool left=property=="leftArmMask";
+        bool expanded=EditorGUILayout.Foldout(left?leftArmMaskExpanded:rightArmMaskExpanded,label,true);
+        if(left)leftArmMaskExpanded=expanded;else rightArmMaskExpanded=expanded;
+        if(!expanded)return;
         using (new EditorGUI.IndentLevelScope())
         {
             EditorGUILayout.Slider(mask.FindPropertyRelative("amount"), 0f, 1f,
@@ -268,27 +302,28 @@ public sealed partial class ReaniIKEditor : Editor
     private void OnSceneGUI()
     {
         var rig = (ReaniIK)target;
+        try
+        {
         Vector3 origin = hips ? hips.position : rig.transform.position;
         float size = HandleUtility.GetHandleSize(origin);
         Vector3 column = origin + rig.transform.right * (hipsHandleOffset + size);
-        Vector3 row = rig.transform.up * (size * 2f);
+        Vector3 row = rig.transform.up * (size * BodyRowSpacing);
         var hipsControl = column;
-        if (!(rig.showFaceControl && rig.facePose.Head))
-            DrawSurfaceSceneControls(rig,column-rig.transform.up*(size*2.5f),size);
+        if(!bodyControlsHidden)
         foreach (var booty in rig.GetComponentsInChildren<SideAssRig2D>(true))
         {
             using var bootyColor = new Handles.DrawingScope(SceneControlColor(new Color(.65f,1,.45f)));
             var center = booty.transform.position + rig.transform.right * size * 2;
-            Undo.RecordObject(booty, "Adjust Booty controls");
             EditorGUI.BeginChangeCheck();
             string side = booty.upperLeg ? booty.upperLeg.name : "Side Ass";
-            booty.protrusion = DrawFaceSlider(rig, center, size, "Booty protrusion / " + side, booty.protrusion, -1, true);
-            booty.compression = DrawFaceSlider(rig, center - rig.transform.up * size * .4f, size, "Booty contact / " + side, booty.compression, 0, true);
+            booty.protrusion = DrawFaceSlider(rig, center, size, "Booty protrusion / " + side, booty.protrusion, -1, true, recordOwner:booty);
+            booty.compression = DrawFaceSlider(rig, center - rig.transform.up * size * .4f, size, "Booty contact / " + side, booty.compression, 0, true, recordOwner:booty);
             if (EditorGUI.EndChangeCheck()) PrefabUtility.RecordPrefabInstancePropertyModifications(booty);
         }
         var spineControl = column + row;
         var neckControl = column + row * 2f;
         var bodyControlSize = size;
+        Vector3? faceControlsCenter=null;
         if (rig.showFaceControl && rig.facePose.Head)
         {
             var root = rig.transform;
@@ -298,10 +333,16 @@ public sealed partial class ReaniIKEditor : Editor
                 + root.right * (faceHandleOffset + faceSize);
             neckControl = faceCenter - root.up * (faceSize * 3.75f);
             spineControl = faceCenter + root.right * (faceSize * FaceColumnSpacing);
-            hipsControl = spineControl - root.up * (faceSize * 2f);
+            hipsControl = spineControl - root.up * (faceSize * BodyRowSpacing);
             bodyControlSize = faceSize;
-            DrawFaceControls(rig, faceCenter, faceSize);
+            faceControlsCenter=faceCenter;
         }
+        var blockOffset=DrawBodyControlsGrip(rig,hipsControl,bodyControlSize);
+        if(!bodyControlsHidden)
+        {
+        if(faceControlsCenter.HasValue)DrawFaceControls(rig,faceControlsCenter.Value+blockOffset,bodyControlSize);
+        else DrawSurfaceSceneControls(rig,column+blockOffset-rig.transform.up*(size*2.5f),size);
+        hipsControl+=blockOffset;spineControl+=blockOffset;
         if (rig.showHipsControl) DrawBoneControl(rig.transform, hips, hipsControl, "Hips", bodyControlSize);
         if (rig.showSpineControl) DrawBoneControl(rig.transform, spine, spineControl, "Spine", bodyControlSize, allowMove: false);
         var extraColumn = rig.transform.right * (bodyControlSize * BodyColumnSpacing);
@@ -309,20 +350,22 @@ public sealed partial class ReaniIKEditor : Editor
         {
             var bellyControl = hipsControl + extraColumn;
             DrawBoneControl(rig.transform, belly, bellyControl, "Belly", bodyControlSize);
-            if (belly)
-                DrawBellyScale(rig, bellyControl + rig.transform.right * (bodyControlSize * 1.3f), bodyControlSize);
         }
         if (rig.showShouldersControl) DrawBoneControl(rig.transform, shoulders, spineControl + extraColumn, "Shoulders", bodyControlSize);
         if (rig.showRootControl)
         {
-            var rootControl=hipsControl-rig.transform.up*(bodyControlSize*2f);
+            var rootControl=hipsControl-rig.transform.up*(bodyControlSize*BodyRowSpacing);
             DrawBoneControl(rig.transform, rootBone,
                 rootControl,
                 "Root", bodyControlSize);
-            if(DrawFullResetButton(rig,rootControl,HandleUtility.GetHandleSize(rootControl)*SceneControlScale*.76f))return;
         }
         // Neck rotation shares the head control as an outer lower semicircle.
-        DrawButtControls(rig,hipsControl+extraColumn-rig.transform.up*(bodyControlSize*2f),bodyControlSize);
+        DrawButtControls(rig,hipsControl+extraColumn-rig.transform.up*(bodyControlSize*BodyRowSpacing),bodyControlSize);
+        if(rig.showBellyControl&&belly)
+            DrawBellyScale(rig,hipsControl-rig.transform.up*(bodyControlSize*(BodyRowSpacing+1.9f))-rig.transform.right*(bodyControlSize*SceneControlScale*.76f),bodyControlSize);
+        }
+        if(!limbControlsHidden)
+        {
         DrawTarget(rig.leftArm, "Left hand", new Color(0.25f, 0.85f, 1f), isHand: true);
         DrawArmMaskControl(rig, rig.leftArm, rig.leftArmMask, "Left");
         DrawTarget(rig.rightArm, "Right hand", new Color(1f, 0.65f, 0.2f), isHand: true);
@@ -331,6 +374,13 @@ public sealed partial class ReaniIKEditor : Editor
         DrawTarget(rig.leftArm2, "Left hand 2", new Color(0.25f, 0.85f, 1f), isHand: true);
         DrawTarget(rig.rightArm2, "Right hand 2", new Color(1f, 0.65f, 0.2f), isHand: true);
         DrawTarget(rig.rightLeg, "Right leg", new Color(1f, 0.65f, 0.2f), isHand: true);
+        }
+        }
+        finally
+        {
+            if(rig)rig.SynchronizeAnimationControls();
+            Undo.FlushUndoRecordObjects();
+        }
     }
 
     private static void DrawSurfaceSceneControls(ReaniIK rig,Vector3 center,float size)
@@ -372,15 +422,15 @@ public sealed partial class ReaniIKEditor : Editor
             }
             var neckLabel=center+root.right*(neckRadius+size*.15f)-root.up*(size*.2f);
             ControlLabel(neckLabel,"Neck");
-            if(DrawCircleResetButton(neckLabel,"Neck",pose.Neck))
-            {RecordFaceControl(rig,"Reset Neck control");var source=PrefabUtility.GetCorrespondingObjectFromSource(rig);pose.neckTurn=source?source.facePose.neckTurn:0f;}
+            if(DrawCircleResetButton(neckLabel,"Neck",true,pose.Neck))
+            {RecordSceneControl(rig,"Reset Neck control",false);var source=PrefabUtility.GetCorrespondingObjectFromSource(rig);pose.neckTurn=source?source.facePose.neckTurn:0f;}
         }
         var headLabel = center + root.right * (radius + size * .15f);
         ControlLabel(headLabel, "Head");
         var prefabRig = PrefabUtility.GetCorrespondingObjectFromSource(rig);
-        if (DrawCircleResetButton(headLabel, "Head", pose.Head))
+        if (DrawCircleResetButton(headLabel, "Head", true, pose.Head))
         {
-            RecordFaceControl(rig, "Reset Head control");
+            RecordSceneControl(rig, "Reset Head control", false);
             pose.headTurn = prefabRig ? prefabRig.facePose.headTurn : 0f;
             pose.gaze = prefabRig ? prefabRig.facePose.gaze : Vector2.zero;
             PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
@@ -435,12 +485,13 @@ public sealed partial class ReaniIKEditor : Editor
             changed = true;
         }
         ControlLabel(resetPosition + root.right * (size * 0.16f), "Reset Face");
+        if(DrawFullResetButton(rig,resetPosition))return;
         if (changed)
             PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
     }
 
     private static float DrawFaceSlider(ReaniIK rig, Vector3 center, float size, string label,
-        float value, float minimum, bool hasBone, float maximum=1f, float defaultValue=0f)
+        float value, float minimum, bool hasBone, float maximum=1f, float defaultValue=0f, Object recordOwner=null)
     {
         var right = rig.transform.right;
         var distance = size * 1.2f;
@@ -455,7 +506,7 @@ public sealed partial class ReaniIKEditor : Editor
         }
         bool reset=DrawSliderResetButton(end+right*(size*.2f),label);
         ControlLabel(end + right * (size * 0.4f), label);
-        if(reset){RecordFaceControl(rig,"Reset "+label);return Mathf.Clamp(defaultValue,minimum,maximum);}
+        if(reset){RecordSceneControl(recordOwner?recordOwner:rig,"Reset "+label,false);return Mathf.Clamp(defaultValue,minimum,maximum);}
         var thumb = Vector3.Lerp(start, end, Mathf.InverseLerp(minimum, maximum, value));
         if (!hasBone)
             return value;
@@ -464,7 +515,7 @@ public sealed partial class ReaniIKEditor : Editor
         if (!EditorGUI.EndChangeCheck())
             return value;
         var t = Mathf.Clamp01(Vector3.Dot(thumb - start, right) / distance);
-        RecordFaceControl(rig, "Adjust " + label);
+        RecordSceneControl(recordOwner?recordOwner:rig, "Adjust " + label);
         return Mathf.Lerp(minimum, maximum, t);
     }
 
@@ -479,7 +530,7 @@ public sealed partial class ReaniIKEditor : Editor
 
     private static void RecordFaceControl(ReaniIK rig, string operation)
     {
-        Undo.RecordObject(rig, operation);
+        RecordSceneControl(rig, operation);
         EditorApplication.QueuePlayerLoopUpdate();
         SceneView.RepaintAll();
     }
@@ -556,6 +607,13 @@ public sealed partial class ReaniIKEditor : Editor
 
     private void DrawBellyScale(ReaniIK rig, Vector3 center, float size)
     {
+        DrawSizeSlider(rig,center,size,"Body",rig.bodyScale.size,v=>rig.bodyScale.size=v,()=>ResetBodySizeToPrefab(rig));
+        DrawSizeSlider(rig,center+rig.transform.right*(size*.55f),size,"L Arm",rig.bodyScale.leftArmSize,v=>rig.bodyScale.leftArmSize=v,()=>ResetArmSizeToPrefab(rig,true));
+        DrawSizeSlider(rig,center+rig.transform.right*(size*1.1f),size,"R Arm",rig.bodyScale.rightArmSize,v=>rig.bodyScale.rightArmSize=v,()=>ResetArmSizeToPrefab(rig,false));
+    }
+
+    private void DrawSizeSlider(ReaniIK rig,Vector3 center,float size,string label,float current,System.Action<float> setValue,System.Action reset)
+    {
         var up = rig.transform.up;
         var right = rig.transform.right;
         var length = size * 1.4f;
@@ -565,22 +623,23 @@ public sealed partial class ReaniIKEditor : Editor
         Handles.DrawLine(start, end, 2f);
         var neutral = Vector3.Lerp(start, end, Mathf.InverseLerp(ReaniIKBodyScale.MinimumSize, ReaniIKBodyScale.MaximumSize, 1f));
         Handles.DrawLine(neutral - right * (size * 0.06f), neutral + right * (size * 0.06f), 2f);
-        ControlLabel(end + right * (size * 0.12f), "1.1");
-        ControlLabel(start + right * (size * 0.12f), "0.5");
-        if(DrawSliderResetButton(center+right*(size*.4f),"Belly Scale"))
+        ControlLabel(end + right * (size * 0.12f), ReaniIKBodyScale.MaximumSize.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
+        ControlLabel(start + right * (size * 0.12f), ReaniIKBodyScale.MinimumSize.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
+        ControlLabel(end+up*(size*.5f)-right*(size*.13f),label);
+        if(DrawSliderResetButton(end+up*(size*.25f),label+" Size"))
         {
-            ResetBodySizeToPrefab(rig);
+            reset();
             return;
         }
-        var value = Mathf.Clamp(rig.bodyScale.size, ReaniIKBodyScale.MinimumSize, ReaniIKBodyScale.MaximumSize);
+        var value = Mathf.Clamp(current, ReaniIKBodyScale.MinimumSize, ReaniIKBodyScale.MaximumSize);
         var thumb = Vector3.Lerp(start, end, Mathf.InverseLerp(ReaniIKBodyScale.MinimumSize, ReaniIKBodyScale.MaximumSize, value));
         EditorGUI.BeginChangeCheck();
         thumb = Handles.Slider(thumb, up, size * 0.10f, Handles.RectangleHandleCap, 0f);
         if (!EditorGUI.EndChangeCheck())
             return;
         var t = Mathf.Clamp01(Vector3.Dot(thumb - start, up) / length);
-        Undo.RecordObject(rig, "Scale Body");
-        rig.bodyScale.size = Mathf.Lerp(ReaniIKBodyScale.MinimumSize, ReaniIKBodyScale.MaximumSize, t);
+        RecordSceneControl(rig, "Scale "+label);
+        setValue(Mathf.Lerp(ReaniIKBodyScale.MinimumSize, ReaniIKBodyScale.MaximumSize, t));
         PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
         EditorApplication.QueuePlayerLoopUpdate();
         SceneView.RepaintAll();
@@ -620,7 +679,7 @@ public sealed partial class ReaniIKEditor : Editor
         }
         if (EditorGUI.EndChangeCheck())
         {
-            Undo.RecordObject(controlled, "Edit " + controlled.name + " pose");
+            RecordSceneControl(controlled, "Edit " + controlled.name + " pose");
             if (position != startPosition) controlled.position = position - offset;
             if (rotation != startRotation) controlled.rotation = rotation;
             PrefabUtility.RecordPrefabInstancePropertyModifications(controlled);

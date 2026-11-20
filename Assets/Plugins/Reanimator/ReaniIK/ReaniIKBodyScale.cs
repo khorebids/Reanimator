@@ -5,10 +5,12 @@ using UnityEngine;
 [Serializable]
 public sealed class ReaniIKBodyScale
 {
-    public const float MinimumSize = .5f;
-    public const float MaximumSize = 1.1f;
+    public const float MinimumSize = .8f;
+    public const float MaximumSize = 1.2f;
     [Range(MinimumSize, MaximumSize), Tooltip("The single Belly scene slider controls this value. 1 restores the unscaled pose.")]
     public float size = 1f;
+    [Range(MinimumSize,MaximumSize)] public float leftArmSize=1f;
+    [Range(MinimumSize,MaximumSize)] public float rightArmSize=1f;
     [Tooltip("X: belly=0, spine=1/3, neck=2/3, head=1. Y: local scale influence. Inherited scale accumulates along the hierarchy.")]
     public AnimationCurve distribution = AnimationCurve.Linear(0, 1, 1, 1);
     [Range(0, 1), Tooltip("0: arms inherit the body size. 1: cancel the combined size multiplier of all scaled ancestors of each arm.")]
@@ -18,6 +20,7 @@ public sealed class ReaniIKBodyScale
 
     private static readonly string[] Names = { "belly", "spine", "neck", "head" };
     [NonSerialized] private Transform boundRoot;
+    [NonSerialized] private readonly HashSet<Transform> scaledArms=new HashSet<Transform>();
     [NonSerialized] private readonly Transform[] chain = new Transform[Names.Length];
     [NonSerialized] private readonly float[] factors = new float[Names.Length];
     [NonSerialized] private readonly Vector3[] originalPositions = new Vector3[Names.Length];
@@ -79,6 +82,16 @@ public sealed class ReaniIKBodyScale
         Compensate(rig.leftArm2.upper);
         Compensate(rig.rightArm2.upper);
         CompensateHeight(rig.transform.up);
+        scaledArms.Clear();
+        ScaleArm(rig.leftArm.upper,leftArmSize);ScaleArm(rig.leftArm2.upper,leftArmSize);
+        ScaleArm(rig.rightArm.upper,rightArmSize);ScaleArm(rig.rightArm2.upper,rightArmSize);
+    }
+
+    private void ScaleArm(Transform arm,float value)
+    {
+        // A single multiplier at the arm root scales its whole descendant chain.
+        // Apply after body compensation, so both controls compose independently.
+        if(arm&&scaledArms.Add(arm))Scale(arm,Mathf.Clamp(value,MinimumSize,MaximumSize));
     }
 
     private void CompensateHeight(Vector3 up)

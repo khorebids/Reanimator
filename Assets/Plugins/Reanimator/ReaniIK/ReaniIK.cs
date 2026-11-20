@@ -350,6 +350,7 @@ public sealed partial class ReaniIK : MonoBehaviour
 
     private void OnEnable()
     {
+        SynchronizeAnimationControls();
         RefreshBoneRigDrivers();
         breathing.Restore();
         ReaniIKSurfaceEffects.RemoveLegacyPropertyBlocks(transform);
@@ -394,6 +395,11 @@ public sealed partial class ReaniIK : MonoBehaviour
 
     private void LateUpdate()
     {
+        SynchronizeAnimationControls(Application.isPlaying
+#if UNITY_EDITOR
+            || UnityEditor.AnimationMode.InAnimationMode()
+#endif
+        );
         surfaceEffects.Prepare(transform);
         // Also preview the mask when IK motion preview is paused or Animation Mode is active.
         leftArmMask.Apply(transform, leftArm);
@@ -405,7 +411,14 @@ public sealed partial class ReaniIK : MonoBehaviour
             double now = UnityEditor.EditorApplication.timeSinceStartup;
             dt = (float)(now - previousTime);
             previousTime = now;
-            if (!previewInEditor || UnityEditor.AnimationMode.InAnimationMode())
+            if (UnityEditor.AnimationMode.InAnimationMode())
+            {
+                ResetSpringMotion();
+                EvaluateAnimationPoseForEditing();
+                surfaceEffects.Tick(transform);
+                return;
+            }
+            if (!previewInEditor)
             {
                 RestorePose();
                 ResetSpringMotion();
@@ -509,6 +522,21 @@ public sealed partial class ReaniIK : MonoBehaviour
     }
 
     public void RefreshFacePoseForEditing() => facePose.DiscoverBones(transform);
+
+    // Timeline scrubbing evaluates authored controls deterministically. Breathing
+    // and spring simulations are intentionally excluded from animation preview.
+    public void EvaluateAnimationPoseForEditing()
+    {
+        RestorePose();
+        SynchronizeAnimationControls(true);
+        bodyScale.Apply(this);
+        facePose.Apply(transform);
+        leftArm.Solve(ikWeight,0);rightArm.Solve(ikWeight,0);
+        leftArm2.Solve(ikWeight,0);rightArm2.Solve(ikWeight,0);
+        leftLeg.Solve(ikWeight,0);rightLeg.Solve(ikWeight,0);
+        EvaluateHiddenBoneRigs(0);
+        ApplyVMode();
+    }
 #endif
 
     internal static bool IsSoftContourBone(Transform bone)
@@ -546,7 +574,13 @@ public sealed partial class ReaniIK : MonoBehaviour
     private void EditorTick()
     {
         if (Application.isPlaying || UnityEditor.EditorApplication.isPlayingOrWillChangePlaymode) return;
-        if (!previewInEditor || UnityEditor.AnimationMode.InAnimationMode())
+        if (UnityEditor.AnimationMode.InAnimationMode())
+        {
+            if(surfaceEffects.NeedsAnimation)
+            {UnityEditor.EditorApplication.QueuePlayerLoopUpdate();UnityEditor.SceneView.RepaintAll();}
+            return;
+        }
+        if (!previewInEditor)
         {
             RestorePose();
             ResetSpringMotion();

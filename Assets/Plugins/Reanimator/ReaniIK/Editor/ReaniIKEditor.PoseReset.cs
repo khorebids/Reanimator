@@ -4,14 +4,12 @@ using UnityEngine;
 
 public sealed partial class ReaniIKEditor
 {
-    private static bool DrawFullResetButton(ReaniIK rig,Vector3 center,float radius)
+    private static bool DrawFullResetButton(ReaniIK rig,Vector3 center)
     {
-        var point=HandleUtility.WorldToGUIPoint(center);float bottom=point.y;
-        foreach(var axis in new[]{rig.transform.up,-rig.transform.up,rig.transform.right,-rig.transform.right})
-            bottom=Mathf.Max(bottom,HandleUtility.WorldToGUIPoint(center+axis*radius).y);
+        var point=HandleUtility.WorldToGUIPoint(center);
         Handles.BeginGUI();bool clicked;
         using(new EditorGUI.DisabledScope(!PrefabUtility.GetCorrespondingObjectFromSource(rig)))
-            clicked=GUI.Button(new Rect(point.x-43f,bottom+7f,86f,20f),
+            clicked=GUI.Button(new Rect(point.x-7f,point.y+22f,86f,20f),
                 new GUIContent("Full Reset","Reset the entire character to its prefab, including all controls, bones, effects and overrides. Undo is available."),EditorStyles.miniButton);
         Handles.EndGUI();
         if(clicked)ResetAllToPrefab(rig);
@@ -34,7 +32,7 @@ public sealed partial class ReaniIKEditor
         PrefabUtility.RevertPrefabInstance(instance,InteractionMode.UserAction);
         // Root transform values are Unity default overrides and are excluded
         // from a normal Revert All. Full Reset explicitly restores those too.
-        Undo.RecordObject(instance.transform,"Full Reset to Prefab");
+        RecordSceneControl(instance.transform,"Full Reset to Prefab",false);
         instance.transform.SetLocalPositionAndRotation(source.transform.localPosition,source.transform.localRotation);
         instance.transform.localScale=source.transform.localScale;
         instance.name=source.name;
@@ -123,6 +121,18 @@ public sealed partial class ReaniIKEditor
         SceneView.RepaintAll();
     }
 
+    internal static void ResetArmSizeToPrefab(ReaniIK rig,bool left)
+    {
+        if(!rig)return;
+        rig.RestoreProceduralPoseForEditing();
+        RecordSceneControl(rig,"Reset "+(left?"Left":"Right")+" Arm Size",false);
+        var source=PrefabUtility.GetCorrespondingObjectFromSource(rig);
+        if(left)rig.bodyScale.leftArmSize=source?source.bodyScale.leftArmSize:1f;
+        else rig.bodyScale.rightArmSize=source?source.bodyScale.rightArmSize:1f;
+        rig.SynchronizeAnimationControls();
+        PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
+    }
+
     private static GUIStyle circleHeaderStyle;
 
     private static void DrawCircleHeader(Transform rig, Vector3 center, float radius, string label, params Transform[] bones)
@@ -150,8 +160,14 @@ public sealed partial class ReaniIKEditor
     }
 
     private static bool DrawCircleResetButton(Vector3 labelPosition, string label, params Transform[] bones)
+        => DrawCircleResetButton(labelPosition,label,false,bones);
+
+    private static bool DrawCircleResetButton(Vector3 labelPosition,string label,bool besideLabel,params Transform[] bones)
     {
         var point = HandleUtility.WorldToGUIPoint(labelPosition);
+        var buttonRect=besideLabel
+            ?new Rect(point.x+EditorStyles.label.CalcSize(new GUIContent(label)).x+6f,point.y-7f,14f,14f)
+            :new Rect(point.x,point.y-27f,14f,14f);
         sliderResetStyle ??= new GUIStyle(EditorStyles.miniButton)
             { padding = new RectOffset(0, 0, 0, 0), alignment = TextAnchor.MiddleCenter, fontSize = 9 };
         bool available = bones.Length > 0;
@@ -160,7 +176,7 @@ public sealed partial class ReaniIKEditor
         Handles.BeginGUI();
         bool clicked;
         using (new EditorGUI.DisabledScope(!available))
-            clicked = GUI.Button(new Rect(point.x, point.y - 27f, 14f, 14f),
+            clicked = GUI.Button(buttonRect,
                 new GUIContent("R", "Reset " + label + " position and rotation to prefab"), sliderResetStyle);
         Handles.EndGUI();
         if (!clicked) return false;
@@ -170,7 +186,8 @@ public sealed partial class ReaniIKEditor
 
     internal static void ResetControlPoseToPrefab(params Transform[] bones)
     {
-        Undo.RecordObjects(bones, "Reset control pose to prefab");
+        Undo.FlushUndoRecordObjects();
+        Undo.RegisterCompleteObjectUndo(bones, "Reset control pose to prefab");
         foreach (var bone in bones)
         {
             if (!bone) continue;
