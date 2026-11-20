@@ -1332,12 +1332,7 @@ public partial class PsdLayerPreviewRenderer
         {
             selectedLayerSelectionKey = selectionKey;
             selectedBoneIndex = childBoneIndex;
-            if (ApplyJointV2(
-                    LimbCurve,
-                    LimbCurve,
-                    ReanimatorJointV2Defaults.SpecialJointDistance,
-                    ReanimatorJointV2Defaults.BoneBaseOffset,
-                    out var error))
+            if (ApplyLocalizedAutoHipJoint(out var error))
             {
                 return spec.Label + " Joint V2 applied";
             }
@@ -3611,7 +3606,7 @@ public partial class PsdLayerPreviewRenderer
             return result.ToArray();
 
         AddIsolatedArmBoneChain(result, "l", IsSecondaryArmAutoWeightLayer(data, "l"));
-        return result.ToArray();
+        return RestrictSplitUpperArmBones(data,result.ToArray());
     }
 
     private int[] BuildRightArmAutoWeightBoneMap(LayerVertexData data)
@@ -3621,7 +3616,7 @@ public partial class PsdLayerPreviewRenderer
             return result.ToArray();
 
         AddIsolatedArmBoneChain(result, "r", IsSecondaryArmAutoWeightLayer(data, "r"));
-        return result.ToArray();
+        return RestrictSplitUpperArmBones(data,result.ToArray());
     }
 
     private void AddIsolatedArmBoneChain(List<int> result, string side, bool secondaryPair)
@@ -3648,6 +3643,10 @@ public partial class PsdLayerPreviewRenderer
             for (var boneIndex = 0; boneIndex < bones.Count; boneIndex++)
             {
                 var bone = bones[boneIndex];
+                if(bone!=null && (bone.name.EndsWith("_SC",StringComparison.OrdinalIgnoreCase) ||
+                    bone.name.IndexOf("_elbow_",StringComparison.OrdinalIgnoreCase)>=0 ||
+                    bone.name.IndexOf("_shoulder_helper",StringComparison.OrdinalIgnoreCase)>=0 ||
+                    ReaniIK.IsSpringRotationBoneName(bone.name)))continue;
                 if (bone == null || !armChain.Contains(bone.parentId) || armChain.Contains(boneIndex))
                 {
                     continue;

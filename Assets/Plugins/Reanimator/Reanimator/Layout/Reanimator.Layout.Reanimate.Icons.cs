@@ -18,7 +18,9 @@ public partial class Reanimator
             ? GUILayout.Toggle(selected, content, style, GUILayout.Height(height), GUILayout.ExpandWidth(true))
             : GUILayout.Button(content, style, GUILayout.Height(height), GUILayout.ExpandWidth(true));
         DrawLeftToolButtonContent(GUILayoutUtility.GetLastRect(), label, iconSpriteName: icon);
-        return result;
+        // Toggle returns its current selection even on repaint. Callers need
+        // an actual click, including a click on the already selected step.
+        return toggle ? result != selected : result;
     }
 }
 #endif

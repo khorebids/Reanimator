@@ -151,9 +151,18 @@ public partial class PsdLayerPreviewRenderer
         }
         new BonePreviewTransform(bonesTreatAsWorldSpace, rotateLocalBoneOffsetsByParent).ResolveAll(rest);
 
-        var start = GetBoneEnd(spine);
-        var axis = -(Vector2)(bones[spine].worldRotation * Vector3.right);
-        var length = bones[spine].length / 3f;
+        int neckReference=TryFindBoneIndexByName("neck",out var neckIndex)?neckIndex:spine;
+        var start = neckReference==spine?GetBoneEnd(spine):GetBoneBasePoint(bones[neckReference]);
+        var axis = -(Vector2)(bones[neckReference].worldRotation * Vector3.right);
+        if(SkeletronShoulderGuideOffset.sqrMagnitude>.0001f)
+        {
+            var normal=new Vector2(-SkeletronShoulderGuideOffset.y,SkeletronShoulderGuideOffset.x).normalized;
+            if(Vector2.Dot(normal,axis)<0f)normal=-normal;
+            axis=normal;
+        }
+        float length=0f;
+        foreach(var arm in arms)length=Mathf.Max(length,Vector2.Dot(GetBoneBasePoint(bones[arm])-start,axis));
+        if(length<.01f)length=Mathf.Max(.01f,bones[neckReference].length);
         var draw = GetLayerVerticesForDraw(data);
         if (!TryBuildShoulderWeightBand(data, draw, start, axis, length, out var staged, out var desired, out message))
             return false;
@@ -169,16 +178,15 @@ public partial class PsdLayerPreviewRenderer
                 message = "The existing shoulders bone cannot be a parent of spine.";
                 return false;
             }
-            var rotation = bones[spine].worldRotation * Quaternion.Euler(0f, 0f, 180f);
+            var rotation = Quaternion.Euler(0f,0f,Mathf.Atan2(axis.y,axis.x)*Mathf.Rad2Deg);
             var shoulder = bones[shoulders];
             shoulder.parentId = spine;
             shoulder.position = ConvertBoneWorldPositionToLocal(spine, start);
             shoulder.rotation = ConvertBoneWorldRotationToLocal(spine, rotation);
             shoulder.length = length;
             shoulder.depth = bones[spine].depth + 1;
-            var restStart = rest[spine].worldPosition +
-                (Vector2)(rest[spine].worldRotation * Vector3.right) * bones[spine].length;
-            var restRotation = rest[spine].worldRotation * Quaternion.Euler(0f, 0f, 180f);
+            var restStart = neckReference==spine?rest[spine].worldPosition+(Vector2)(rest[spine].worldRotation*Vector3.right)*bones[spine].length:rest[neckReference].worldPosition;
+            var restRotation = rest[neckReference].worldRotation*Quaternion.Inverse(bones[neckReference].worldRotation)*rotation;
             shoulder.initialPosition = LocalPosition(rest[spine].worldPosition, rest[spine].worldRotation, restStart);
             shoulder.initialRotation = bonesTreatAsWorldSpace ? restRotation :
                 Quaternion.Inverse(rest[spine].worldRotation) * restRotation;

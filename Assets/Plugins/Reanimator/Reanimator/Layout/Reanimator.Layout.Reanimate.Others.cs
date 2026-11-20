@@ -30,6 +30,7 @@ public partial class Reanimator : EditorWindow
         public bool stretch;
         public bool inheritBoobs;
         public bool inheritBelly;
+        public bool inheritShoulders;
         public string parentBone;
         public bool smoothRoot = true;
         public string rootSourceBone;
@@ -44,6 +45,7 @@ public partial class Reanimator : EditorWindow
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, HashSet<string>> reanimateOtherBoobs = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, HashSet<string>> reanimateOtherBelly = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, HashSet<string>> reanimateOtherShoulders = new(StringComparer.OrdinalIgnoreCase);
     private int reanimateOtherIndex;
     private int reanimateOtherStrokeControl;
     private Vector2 reanimateOtherStart, reanimateOtherEnd;
@@ -56,6 +58,7 @@ public partial class Reanimator : EditorWindow
 
     private void NavigateReanimateStep(int direction)
     {
+        ResetSuccessfulMascotOnNavigation();
         reanimateDiagnosticLayer = null;
         if (reanimateStep == ReanimateShouldersStep)
         {
@@ -118,11 +121,12 @@ public partial class Reanimator : EditorWindow
             var key = ReanimateOtherSpriteKey(sprite);
             var inherit = reanimateOtherBoobs.TryGetValue(path, out var inherited) && inherited.Contains(key);
             var inheritBelly = reanimateOtherBelly.TryGetValue(path, out var bellies) && bellies.Contains(key);
+            var inheritShoulders=reanimateOtherShoulders.TryGetValue(path,out var shoulders) && shoulders.Contains(key);
             if (!drafts.TryGetValue(key, out var regions))
                 regions = new List<OtherSpriteDraft>();
-            if (inherit || inheritBelly)
+            if (inherit || inheritBelly || inheritShoulders)
                 result.Add(new OtherSpriteOperation { key = key, name = sprite.name, mode = ReanimateOtherMode.Skip,
-                    inheritBoobs = inherit, inheritBelly = inheritBelly });
+                    inheritBoobs = inherit, inheritBelly = inheritBelly,inheritShoulders=inheritShoulders });
             for (var region = 0; region < regions.Count; region++)
             {
                 var draft = regions[region];
@@ -147,7 +151,7 @@ public partial class Reanimator : EditorWindow
         return result;
     }
 
-    private void ApplyReanimateOthers(List<OtherSpriteOperation> drafts, List<string> skinnedSprites,
+    private async System.Threading.Tasks.Task ApplyReanimateOthersAsync(List<OtherSpriteOperation> drafts, List<string> skinnedSprites,
         PsdLayerPreviewRenderer.ReanimateChestDraft chestDraft, Vector2[] bellyContour)
     {
         if (drafts.Count == 0)
@@ -169,14 +173,20 @@ public partial class Reanimator : EditorWindow
         var complete = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var inProgress = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var draft in drafts)
-            ApplySprite(draft.key);
+            await ApplySprite(draft.key);
 
-        void ApplySprite(string key)
+        async System.Threading.Tasks.Task ApplySprite(string key)
         {
             if (complete.Contains(key))
                 return;
             var regions = operations[key];
             var name = regions[0].name;
+            var workDone=0;
+            var workCount=regions.FindAll(draft=>draft.mode!=ReanimateOtherMode.Skip).Count+1+
+                (regions.Exists(draft=>draft.mode==ReanimateOtherMode.Projector)?1:0)+
+                (regions.Exists(draft=>draft.inheritShoulders)?1:0)+
+                (regions.Exists(draft=>draft.inheritBelly)?1:0)+
+                (regions.Exists(draft=>draft.inheritBoobs)?2:0);
             if (!inProgress.Add(key))
                 throw new InvalidOperationException($"Others / {name}: Projector sources form a cycle.");
             if (!sprites.TryGetValue(key, out var layer))
@@ -190,9 +200,11 @@ public partial class Reanimator : EditorWindow
             }
             if (layer == null)
                 throw new InvalidOperationException($"Others: sprite '{name}' is missing after ALLIN.");
-            if (regions.Exists(draft => draft.mode == ReanimateOtherMode.Projector) &&
-                !layerPreviewRenderer.TryPrepareReanimateProjectorGeometry(layer, out var geometryError))
-                throw new InvalidOperationException($"Others / {layer.name}: {geometryError}");
+            if (regions.Exists(draft => draft.mode == ReanimateOtherMode.Projector))
+                await Work("Prepare",()=>{
+                    if(!layerPreviewRenderer.TryPrepareReanimateProjectorGeometry(layer,out var geometryError))
+                        throw new InvalidOperationException($"Others / {layer.name}: {geometryError}");
+                });
             foreach (var draft in regions)
             {
                 if (draft.mode == ReanimateOtherMode.Skip)
@@ -204,42 +216,60 @@ public partial class Reanimator : EditorWindow
                     foreach (var sourceKey in draft.sources)
                     {
                         if (operations.ContainsKey(sourceKey))
-                            ApplySprite(sourceKey);
+                            await ApplySprite(sourceKey);
                         if (!sprites.TryGetValue(sourceKey, out var source))
                             throw new InvalidOperationException($"{context}: a Projector source is missing.");
                         sources.Add(source);
                     }
-                    if (!layerPreviewRenderer.TryApplyReanimateProjectorRegion(layer, sources, draft.stretch,
+                    await Work("Projector",()=>{if (!layerPreviewRenderer.TryApplyReanimateProjectorRegion(layer, sources, draft.stretch,
                             draft.contour, out var error))
-                        throw new InvalidOperationException($"{context}: {error}");
+                        throw new InvalidOperationException($"{context}: {error}");});
                 }
-                else if (!layerPreviewRenderer.TryApplyOtherSprite(layer, draft.mode, draft.points,
+                else await Work("Region "+(draft.region+1),()=>{if (!layerPreviewRenderer.TryApplyOtherSprite(layer, draft.mode, draft.points,
                              draft.contour, draft.region, out var error, draft.parentBone, draft.smoothRoot, draft.rootSourceBone))
-                    throw new InvalidOperationException($"{context}: {error}");
+                    throw new InvalidOperationException($"{context}: {error}");});
             }
             var contours = new List<Vector2[]>();
+            var protectedContours = new List<Vector2[]>();
             foreach (var draft in regions)
-                if (draft.mode != ReanimateOtherMode.Skip)
+            {
+                if(draft.mode==ReanimateOtherMode.SC)protectedContours.Add(draft.contour);
+                if (draft.mode != ReanimateOtherMode.Skip && draft.mode != ReanimateOtherMode.SC)
                     contours.Add(draft.contour);
-            layerPreviewRenderer.SoftenReanimateOtherGaps(layer, contours);
+            }
+            await Work("Smooth",()=>layerPreviewRenderer.SoftenReanimateOtherGaps(layer, contours,protectedContours));
+            if(regions.Exists(draft=>draft.inheritShoulders))
+                await Work("Shoulders",()=>{if(!layerPreviewRenderer.TryInheritReanimateShoulders(layer,out var shouldersError))
+                    throw new InvalidOperationException($"Others / {layer.name} / Inherit Shoulders: {shouldersError}");});
             if (regions.Exists(draft => draft.inheritBelly))
             {
                 try
                 {
-                    layerPreviewRenderer.ApplyReanimateBelly(layer, bellyContour);
+                    await Work("Belly",()=>layerPreviewRenderer.ApplyReanimateBelly(layer, bellyContour));
                 }
                 catch (InvalidOperationException error)
                 {
                     throw new InvalidOperationException($"Others / {layer.name} / Inherit Belly: {error.Message}", error);
                 }
             }
-            if (regions.Exists(draft => draft.inheritBoobs) &&
-                !layerPreviewRenderer.TryApplyFullBoobsWeights(chestDraft.LeftTarget, chestDraft.RightTarget,
-                    chestDraft.LeftContour, chestDraft.RightContour, out _, out var boobsError, layer))
-                throw new InvalidOperationException($"Others / {layer.name} / Inherit Boobs: {boobsError}");
+            if (regions.Exists(draft => draft.inheritBoobs))
+                for(int side=0;side<2;side++)
+                {
+                    var currentSide=side;
+                    await Work("Chest "+(side+1)+"/2",()=>{if(!layerPreviewRenderer.TryInheritReanimateChest(layer,
+                    FindReanimateStepSprite(layerPreviewRenderer.Layers, ReanimateChestStep),
+                    chestDraft.LeftContour, chestDraft.RightContour, out var boobsError,currentSide))
+                        throw new InvalidOperationException($"Others / {layer.name} / Inherit Boobs: {boobsError}");});
+                }
             inProgress.Remove(key);
             complete.Add(key);
             skinnedSprites.Add(layer.name);
+            async System.Threading.Tasks.Task Work(string phase,Action apply)
+            {
+                await RunReanimateStageAsync($"{name}: {phase}",
+                    .76f+.06f*(complete.Count+(float)workDone/workCount)/Math.Max(1,operations.Count),()=>{apply();return "Complete";});
+                workDone++;
+            }
         }
     }
 
@@ -291,6 +321,10 @@ public partial class Reanimator : EditorWindow
             bellies.Add(key);
         else
             bellies.Remove(key);
+        if(!reanimateOtherShoulders.TryGetValue(path,out var shoulders))
+        {shoulders=new HashSet<string>(StringComparer.OrdinalIgnoreCase);reanimateOtherShoulders.Add(path,shoulders);}
+        if(EditorGUILayout.ToggleLeft("Inherit Shoulders (after all regions)",shoulders.Contains(key)))shoulders.Add(key);
+        else shoulders.Remove(key);
         DrawOtherRegionSettings(sprite, regions);
         using (new EditorGUILayout.HorizontalScope())
         {

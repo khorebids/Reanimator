@@ -20,6 +20,8 @@ public sealed class ReaniIKFacePose
     public float eyelidTravel = 0.23f;
 
     [HideInInspector] public float headTurn;
+    [Min(0f)] public float neckTurnDegrees = 90f;
+    [HideInInspector] public float neckTurn;
     [HideInInspector] public Vector2 gaze;
     [HideInInspector] public float upperLipHeight;
     [HideInInspector] public float upperLipSize;
@@ -29,6 +31,7 @@ public sealed class ReaniIKFacePose
     [HideInInspector] public float eyelidClosure;
 
     [NonSerialized] private RigBreathing2D.Bone headPose;
+    [NonSerialized] private RigBreathing2D.Bone neckPose;
     [NonSerialized] private RigBreathing2D.Bone eyesPose;
     [NonSerialized] private RigBreathing2D.Bone upperLipPose;
     [NonSerialized] private RigBreathing2D.Bone lowerLipPose;
@@ -36,6 +39,7 @@ public sealed class ReaniIKFacePose
     [NonSerialized] private RigBreathing2D.Bone eyelidsPose;
 
     public Transform Head => headPose?.bone;
+    public Transform Neck => neckPose?.bone;
     public Vector3 HeadRestRootPosition { get; private set; }
     public bool HasEyes => eyesPose?.bone != null;
     public bool HasUpperLip => upperLipPose?.bone != null;
@@ -46,6 +50,7 @@ public sealed class ReaniIKFacePose
     public void ResetControls()
     {
         headTurn = 0f;
+        neckTurn = 0f;
         gaze = Vector2.zero;
         upperLipHeight = 0f;
         upperLipSize = 0f;
@@ -59,6 +64,7 @@ public sealed class ReaniIKFacePose
     {
         Restore();
         headPose = new RigBreathing2D.Bone();
+        neckPose = new RigBreathing2D.Bone();
         eyesPose = new RigBreathing2D.Bone();
         upperLipPose = new RigBreathing2D.Bone();
         lowerLipPose = new RigBreathing2D.Bone();
@@ -66,9 +72,11 @@ public sealed class ReaniIKFacePose
         lipCornersPose = new RigBreathing2D.Bone();
         foreach (var bone in rig.GetComponentsInChildren<Transform>(true))
         {
+            if(bone.GetComponent<SpriteRenderer>())continue;
             var pose = bone.name.ToLowerInvariant() switch
             {
                 "head" => headPose,
+                "neck" => neckPose,
                 "eyes" => eyesPose,
                 "upper_lip" => upperLipPose,
                 "lower_lip" => lowerLipPose,
@@ -84,6 +92,8 @@ public sealed class ReaniIKFacePose
 
     internal void Apply(Transform rig)
     {
+        var neckRotation=Mathf.Clamp(neckTurn,-1f,1f)*neckTurnDegrees;
+        if(neckRotation!=0f)neckPose?.Apply(Vector3.zero,Vector3.one,neckRotation);
         var turn = Mathf.Clamp(headTurn, -1f, 1f) * headTurnDegrees;
         if (turn != 0f)
             headPose?.Apply(Vector3.zero, Vector3.one, turn);
@@ -122,5 +132,6 @@ public sealed class ReaniIKFacePose
         upperLipPose?.Restore();
         eyesPose?.Restore();
         headPose?.Restore();
+        neckPose?.Restore();
     }
 }

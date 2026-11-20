@@ -45,7 +45,7 @@ public sealed class ReaniIKArmMask
             searched = true;
             if (frontRenderer && frontRenderer.transform.IsChildOf(root))
                 renderer = frontRenderer;
-            else if (upper && lower && tip)
+            else if (upper && tip)
                 foreach (var candidate in root.GetComponentsInChildren<SpriteRenderer>(true))
                 {
                     // Never mask the rear copy or fall back to the body.
@@ -53,7 +53,7 @@ public sealed class ReaniIKArmMask
                         continue;
                     var skin = candidate.GetComponent<SpriteSkin>();
                     if (skin && Array.IndexOf(skin.boneTransforms, upper) >= 0 &&
-                        Array.IndexOf(skin.boneTransforms, lower) >= 0 && Array.IndexOf(skin.boneTransforms, tip) >= 0)
+                        (!lower || Array.IndexOf(skin.boneTransforms, lower) >= 0) && Array.IndexOf(skin.boneTransforms, tip) >= 0)
                     {
                         if (!renderer || candidate.sortingOrder > renderer.sortingOrder)
                             renderer = candidate;
@@ -93,7 +93,7 @@ public sealed class ReaniIKArmMask
         var bindPoses = sprite.GetBindPoses();
         var spriteBones = sprite.GetBones();
         var indices = new[] { Array.IndexOf(skin.boneTransforms, limb.upper),
-            Array.IndexOf(skin.boneTransforms, limb.lower), Array.IndexOf(skin.boneTransforms, limb.tip) };
+            Array.IndexOf(skin.boneTransforms, limb.lower ? limb.lower : limb.upper), Array.IndexOf(skin.boneTransforms, limb.tip) };
         foreach (var index in indices)
             if (index < 0 || index >= bindPoses.Length || index >= spriteBones.Length)
             {
@@ -105,6 +105,12 @@ public sealed class ReaniIKArmMask
         Vector2 c = bindPoses[indices[2]].inverse.MultiplyPoint3x4(Vector3.zero);
         Vector2 d = bindPoses[indices[2]].inverse.MultiplyPoint3x4(Vector3.right * spriteBones[indices[2]].length);
         if ((d - c).sqrMagnitude < 1e-8f) d = c + (c - b) * 0.3f;
+        if(limb.upper==limb.tip)
+        {
+            b=Vector2.Lerp(a,d,1f/3f);
+            c=Vector2.Lerp(a,d,2f/3f);
+        }
+        else if(!limb.lower)b=Vector2.Lerp(a,c,.5f);
         var vertices = sprite.vertices;
         var uv = sprite.uv;
         var triangles = sprite.triangles;

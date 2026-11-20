@@ -8,6 +8,7 @@ public partial class Reanimator : EditorWindow
 {
     private const string EmptyPreviewLogoPath = "Assets/Plugins/Reanimator/Graphics/logo.png";
     private static Texture2D emptyPreviewLogo;
+    private static Texture2D loadingMascot;
     private static GUIStyle orangeToolbarButtonStyle;
     private static Texture2D orangeToolbarButtonNormalTexture;
     private static Texture2D orangeToolbarButtonHoverTexture;
@@ -18,7 +19,7 @@ public partial class Reanimator : EditorWindow
         UpdateWindowEventOptions();
         EnsureWeightArrays();
         EnsureDefaultToolMode();
-        if (pendingApplyPath != null || TryGetExternalBlockingProgress(out _, out _, out _))
+        if (pendingApplyPath != null || (!reanimateRunning && TryGetExternalBlockingProgress(out _, out _, out _)))
             HandleExternalBlockingProgressInput();
 
         using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
@@ -36,14 +37,14 @@ public partial class Reanimator : EditorWindow
             if (GUILayout.Toggle(previewMode == PreviewMode.SurfaceMasks, "Surface Masks", EditorStyles.toolbarButton, GUILayout.Width(105f)))
                 SetPreviewMode(PreviewMode.SurfaceMasks);
             GUILayout.FlexibleSpace();
-            using (new EditorGUI.DisabledScope(!TryValidateAllInPreflight(out _)))
+            using (new EditorGUI.DisabledScope(reanimateRunning || !TryValidateAllInPreflight(out _)))
             {
                 if (GUILayout.Button("ALLIN", GetOrangeToolbarButtonStyle(), GUILayout.Width(55f)))
                     InvokeComfimatorButton("ALLIN");
             }
             GUILayout.Space(4f);
             GUILayout.Button("Visibility", EditorStyles.toolbarButton, GUILayout.Width(70f));
-            using (new EditorGUI.DisabledScope(layerPreviewRenderer == null || !layerPreviewRenderer.HasPendingChanges))
+            using (new EditorGUI.DisabledScope(reanimateRunning || layerPreviewRenderer == null || !layerPreviewRenderer.HasPendingChanges))
             {
                 if (GUILayout.Button("Revert", EditorStyles.toolbarButton, GUILayout.Width(55f)))
                     RevertChanges();
@@ -600,6 +601,29 @@ public partial class Reanimator : EditorWindow
 
     private void DrawExternalBlockingProgressOverlay()
     {
+        if(reanimateRunning)
+        {
+            var now=EditorApplication.timeSinceStartup;
+            // Animate only towards confirmed stage progress, never invent work
+            // or let a time-based estimate creep to 99% during a stalled stage.
+            reanimateDisplayedProgress=reanimateProgress>=1f?1f:Mathf.MoveTowards(
+                Mathf.Min(reanimateDisplayedProgress,reanimateProgress),reanimateProgress,
+                Mathf.Max(0f,(float)(now-reanimateProgressLastDraw))*.5f);
+            reanimateProgressLastDraw=now;
+            var cardWidth=Mathf.Min(378f,Mathf.Max(1f,position.width-16f));
+            var card=new Rect(Mathf.Max(8f,position.width-cardWidth-8f),Mathf.Max(8f,position.height-90f),cardWidth,82f);
+            EditorGUI.DrawRect(card,new Color(.10f,.10f,.10f,.98f));
+            DrawVisibilityElementOutline(card,new Color(1f,.48f,.08f,1f));
+            DrawLoadingMascot(card);
+            GUI.Label(new Rect(card.x+12,card.y+14,card.width-24,20),"REANIMATOR · "+reanimateProgressTitle,EditorStyles.boldLabel);
+            var bar=new Rect(card.x+12,card.y+39,card.width-24,18);
+            EditorGUI.DrawRect(bar,new Color(.22f,.22f,.22f));
+            EditorGUI.DrawRect(new Rect(bar.x,bar.y,bar.width*reanimateDisplayedProgress,bar.height),new Color(1f,.48f,.08f));
+            GUI.Label(bar,$"{reanimateDisplayedProgress*100f:0.0}%",new GUIStyle(EditorStyles.boldLabel){alignment=TextAnchor.MiddleCenter});
+            GUI.Label(new Rect(card.x+12,card.y+60,card.width-24,16),"Processing stages",EditorStyles.miniLabel);
+            Repaint();
+            return;
+        }
         if (!TryGetExternalBlockingProgress(out var title, out var status, out var progress))
             return;
 
@@ -635,6 +659,22 @@ public partial class Reanimator : EditorWindow
         GUI.Label(statusRect, string.IsNullOrWhiteSpace(status) ? "Working..." : status, statusStyle);
         EditorGUIUtility.AddCursorRect(rect, MouseCursor.Arrow);
         Repaint();
+    }
+
+    private static void DrawLoadingMascot(Rect card)
+    {
+        if(Event.current.type!=EventType.Repaint)return;
+        if(!loadingMascot)loadingMascot=AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Plugins/Reanimator/Graphics/loading-mascot.png");
+        if(!loadingMascot)return;
+        // The supplied artwork rests on row 486 of its 546px canvas; its hand
+        // hangs below that row, overlapping the top edge of the card.
+        const float ledge=.89011f;
+        float width=Mathf.Min(card.width*1.04f,Mathf.Max(0,card.y-8f)*loadingMascot.width/(loadingMascot.height*ledge));
+        float height=width*loadingMascot.height/loadingMascot.width;
+        var artwork=new Rect(card.center.x-width*.5f,card.y-height*ledge,width,height);
+        var tint=GUI.color;GUI.color=Color.white;
+        GUI.DrawTexture(artwork,loadingMascot,ScaleMode.StretchToFill,true);
+        GUI.color=tint;
     }
 
     private static GUIStyle GetOrangeToolbarButtonStyle()

@@ -7,7 +7,7 @@ using UnityEngine;
 
 public partial class PsdLayerPreviewRenderer
 {
-    private const int SideAssFanVersion=5;
+    private const int SideAssFanVersion=7;
     private string sideAssContourDiagnostic;
     [Serializable] private sealed class SideAssGeometryStamp
     {public Vector2[] vertices,uv;public int[] triangles,map,boundary;public BoneWeight[] weights;public Matrix4x4[] bind;public bool spriteBind;}
@@ -66,7 +66,12 @@ public partial class PsdLayerPreviewRenderer
         TryGetSelectedLayer(out var selectedLayer);TryGetLayerVertexData(selectedLayer,out var originalData);
         var dataSnapshot=originalData!=null?CloneProjectorLayerData(originalData):null;
         var recipesSnapshot=JsonUtility.ToJson(sideAssFile);
-        try { return ApplySideAssCore(out message); }
+        try
+        {
+            if(!ApplySideAssCore(out message))return false;
+            InheritSideAssOnBody(selectedLayer);
+            return true;
+        }
         catch(Exception exception)
         {
             bones.Clear();bones.AddRange(snapshot);RecomputeBoneWorldTransforms();BuildBoneDrawOrder();InvalidateBonePose();
@@ -80,6 +85,7 @@ public partial class PsdLayerPreviewRenderer
     }
     private bool ApplySideAssCore(out string message, bool previewOnly=false)
     {
+        SynchronizeSideAssCurveSettings();
         LoadSideAss(); message="Select the leg sprite and upper leg bone, then draw the outer quarter arc.";
         if(sideAssContour.Count<2 || selectedBoneIndex<0 || selectedBoneIndex>=bones.Count || !TryGetSelectedLayer(out var layer) ||
             !TryGetLayerVertexData(layer,out var data) || data?.vertices==null) return false;
@@ -224,6 +230,7 @@ public partial class PsdLayerPreviewRenderer
         }
         staged.boundaryEdgePairs=BuildFullBoobExterior(exteriorSource,contour,empty,layer,vertices,uv,weights);
         staged.vertices=vertices.ToArray();staged.vertexUvs=uv.ToArray();staged.boneWeights=weights.ToArray();
+        staged.boundaryEdgePairs=NormalizeSideAssExterior(staged,staged.boundaryEdgePairs);
         var exterior=staged.boundaryEdgePairs;
         if(!TryRetriangulateFullBoobsWithConstraints(staged,constraints,retainedCount,retainedEdges.Count))
             throw new InvalidOperationException("Could not join the fan to the retained sprite mesh.");
@@ -237,10 +244,13 @@ public partial class PsdLayerPreviewRenderer
             {int x=staged.triangles[i+e],y=staged.triangles[i+(e+1)%3];if(x!=v&&y!=v&&DistancePointToSegment(staged.vertices[v],staged.vertices[x],staged.vertices[y])<.0001f&&Vector2.Distance(staged.vertices[v],staged.vertices[x])>.001f&&Vector2.Distance(staged.vertices[v],staged.vertices[y])>.001f)edges.Add((Mathf.Min(x,y),Mathf.Max(x,y)));}
             foreach(var edge in edges)SplitTrianglesOnEdge(ref staged.triangles,staged.vertices,staged.vertices[v],v,edge.Item1,edge.Item2);
         }
-        staged.triangles=ReanimatorMeshWinding.Normalize(staged.triangles,out _);
+        bool oriented=TryNormalizeSideAssTriangles(staged);
+        if(!oriented)SideAssJoinFailureProbe?.Invoke(JsonUtility.ToJson(new SideAssJoinDiagnostic{
+            dataJson=JsonUtility.ToJson(staged),exterior=exterior,retained=retainedEdges.ToArray(),local=local.ToArray()}));
         BuildEdgePairs(staged.triangles,staged.vertices.Length,out staged.allEdgePairs,out staged.boundaryEdgePairs);
-        if(!SideAssJoinIsClosed(staged,exterior) && !RepairSideAssJoin(staged,exterior,retainedEdges,local))
+        if((!oriented || !SideAssJoinIsClosed(staged,exterior)) && !RepairSideAssJoin(staged,exterior,retainedEdges,local))
             throw new InvalidOperationException("Fan triangulation left an incomplete boundary.");
+        RefineSideAssClosedBoundary(staged,seamArc,Mathf.Min(ra,rb)*.06f);
         // The retained sprite silhouette and intersections added by the exterior
         // builder also need the radial gradient. Otherwise the original edge can
         // stay leg-weighted while the new inner rows follow the helpers.
@@ -293,6 +303,8 @@ public partial class PsdLayerPreviewRenderer
         }
         var generatedRecipe=new SideAssRecipe{leg=bones[leg].name,volume=bones[helperA].name,press=bones[helperB].name,layer=BuildSelectionKey(layer),contour=contour,manualFan=true,radius=Mathf.Max(ra,rb),fanVersion=SideAssFanVersion,fanPointCount=SideAssFanPoints,fanFlip=SideAssFlip,drawingDoc=sideAssContour.ToArray(),baseDrawing=drawn.ToArray(),geometryStamp=SideAssStamp(staged),validatedExterior=exterior,arcSamples=polygon.Skip(1).ToArray(),weightArc=sourceArc,weightCenter=center,weightA=a,weightB=b,weightPrefix=prefixLength,weightPerpendicular=perpendicularDistance,weightRA=ra,weightRB=rb,sourceWeights=followSource,curveStamp=SideAssCurveStamp};
 
+        generatedRecipe.bodyWeights=previous?.bodyWeights??new List<SideAssSavedWeight>();
+        generatedRecipe.bodyWeightBones=previous?.bodyWeightBones;
         if(previewOnly)
         {
             sideAssTestData=staged;sideAssTestRecipe=generatedRecipe;sideAssTestBones=CloneBones(bones);

@@ -29,6 +29,8 @@ public partial class PsdLayerPreviewRenderer
         public float radius, restLegAngle, bendProtrusion = .35f;
         public string[] weightBones;
         public List<SideAssSavedWeight> weights = new();
+        public string[] bodyWeightBones;
+        public List<SideAssSavedWeight> bodyWeights = new();
     }
     [Serializable] private sealed class SideAssSavedWeight { public Vector2 point; public BoneWeight original, applied; }
     [Serializable] private sealed class SideAssFile { public List<SideAssRecipe> regions = new(); public int enabledTargets; }

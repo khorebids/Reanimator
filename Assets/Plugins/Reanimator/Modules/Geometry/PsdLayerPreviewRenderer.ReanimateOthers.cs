@@ -7,7 +7,48 @@ internal enum ReanimateOtherMode { Skip, SC, SR, SRN, Projector }
 
 public partial class PsdLayerPreviewRenderer
 {
-    internal void SoftenReanimateOtherGaps(LayerInfo layer, IReadOnlyList<Vector2[]> contours)
+    internal bool TryInheritReanimateChest(LayerInfo target, LayerInfo body,
+        IReadOnlyList<Vector2> left, IReadOnlyList<Vector2> right, out string error, int onlySide = -1)
+    {
+        error = null;
+        if (body == null || target == null || !TryGetLayerVertexData(target, out var data))
+        {
+            error = "Body and clothing geometry are required for chest inheritance.";
+            return false;
+        }
+        // Clothing inherits the existing body deformation, never its silhouette.
+        // Projector inserts support points only inside the target's triangles.
+        var contours = new[] { left, right };
+        for (int side=0;side<contours.Length;side++)
+        {
+            if(onlySide>=0 && side!=onlySide)continue;
+            var contour=contours[side];
+            if (contour == null || contour.Count < 3)
+            {
+                error = "Both chest contours are required.";
+                return false;
+            }
+            var region = MapFullBoobContourToBase(target, contour);
+            bool overlap = false;
+            foreach (var point in data.vertices)
+                if (ContainsFaceMouthPoint(point, region)) { overlap = true; break; }
+            if (!overlap)
+                foreach (var point in region)
+                    if (TryFindContainingTriangle(data.triangles, data.vertices, point,
+                            out _, out _, out _, out _, out _, out _, out _, out _)) { overlap = true; break; }
+            if (!overlap)
+                for (int i = 0; i < region.Length && !overlap; i++)
+                    for (int e = 0; e + 1 < data.allEdgePairs.Length; e += 2)
+                        if (TryGetSegmentIntersection(region[i], region[(i + 1) % region.Length],
+                                data.vertices[data.allEdgePairs[e]], data.vertices[data.allEdgePairs[e + 1]], out _, out _))
+                        { overlap = true; break; }
+            if (overlap && !TryApplyReanimateProjectorRegion(target, new[] { body }, true, contour, out error))
+                return false;
+        }
+        return true;
+    }
+
+    internal void SoftenReanimateOtherGaps(LayerInfo layer, IReadOnlyList<Vector2[]> contours,IReadOnlyList<Vector2[]> protectedContours=null)
     {
         if (contours.Count == 0 || !TryGetLayerVertexData(layer, out var data))
             return;
@@ -15,21 +56,27 @@ public partial class PsdLayerPreviewRenderer
         foreach (var contour in contours)
             regions.Add(MapFullBoobContourToBase(layer, contour));
         EnsureBoneWeightsArraySize(data, data.vertices.Length);
-        SoftenOtherGapWeights(data.vertices, data.boneWeights, regions);
+        var excluded=new bool[data.vertices.Length];
+        if(protectedContours!=null)foreach(var contour in protectedContours)
+        {
+            var polygon=MapFullBoobContourToBase(layer,contour);
+            for(int i=0;i<excluded.Length;i++)if(ContainsFaceMouthPoint(data.vertices[i],polygon))excluded[i]=true;
+        }
+        SoftenOtherGapWeights(data.vertices, data.boneWeights, regions,excluded);
         MarkSkinningWeightsChanged(data);
         MarkEditGeometryDataChanged(data, BuildSelectionKey(layer), BuildKey(layer.name, layer.layerId));
     }
 
-    private static void SoftenOtherGapWeights(Vector2[] vertices, BoneWeight[] boneWeights, IReadOnlyList<Vector2[]> regions)
+    private static void SoftenOtherGapWeights(Vector2[] vertices, BoneWeight[] boneWeights, IReadOnlyList<Vector2[]> regions,bool[] excluded=null)
     {
         var original = (BoneWeight[])boneWeights.Clone();
         var samples = new List<int>[regions.Count];
-        var covered = new bool[vertices.Length];
+        var covered = excluded!=null?(bool[])excluded.Clone():new bool[vertices.Length];
         for (var r = 0; r < regions.Count; r++)
         {
             samples[r] = new List<int>();
             for (var i = 0; i < vertices.Length; i++)
-                if (ContainsFaceMouthPoint(vertices[i], regions[r]))
+                if ((excluded==null || !excluded[i]) && ContainsFaceMouthPoint(vertices[i], regions[r]))
                 {
                     covered[i] = true;
                     samples[r].Add(i);
@@ -113,7 +160,7 @@ public partial class PsdLayerPreviewRenderer
     internal bool TryApplyReanimateProjectorRegion(LayerInfo layer, IReadOnlyList<LayerInfo> sourceLayers,
         bool stretch, IReadOnlyList<Vector2> contour, out string error)
     {
-        if (!TryPrepareOtherRegion(layer, contour, out var data, out var staged, out var region, out _, out error))
+        if (!TryPrepareOtherRegion(layer, contour, out var data, out var staged, out var region, out _, out error, exactBoundary: true))
             return false;
         var key = BuildSelectionKey(layer);
         var stableKey = BuildKey(layer.name, layer.layerId);
@@ -129,12 +176,11 @@ public partial class PsdLayerPreviewRenderer
 
         if (stretch)
         {
-            var projected = CloneProjectorLayerData(staged);
-            if (!TryBuildProjectorAplGeometry(projected, sources, false, 4f, out _, out _, out error))
-                return false;
-            foreach (var point in projected.vertices)
+            // Region transfer consumes candidate points, not global merged
+            // triangles. Insert them into the target's existing topology.
+            foreach (var point in BuildProjectorAplProjectedFallbackCandidates(staged, sources))
                 if (ContainsFaceMouthPoint(point, region))
-                    InsertOtherRegionPoint(staged, point);
+                    InsertOtherRegionPoint(staged, point, exactBoundary: true);
         }
         var weighted = CloneProjectorLayerData(staged);
         if (!TryBuildProjectorWeights(weighted, sources, false, true, true,
@@ -208,6 +254,7 @@ public partial class PsdLayerPreviewRenderer
         }
 
         var parent = FindReanimateAccessoryParent(points[0]);
+        if(mode==ReanimateOtherMode.SC && NormalizeAutoWeightName(layer.name).Contains("hair") && TryFindBoneIndexByName("head",out var hairParent))parent=hairParent;
         if ((mode is ReanimateOtherMode.SR or ReanimateOtherMode.SRN) &&
             !string.IsNullOrEmpty(parentBone) && !TryFindBoneIndexByName(parentBone, out parent))
         {
@@ -221,6 +268,8 @@ public partial class PsdLayerPreviewRenderer
         }
 
         var sourceSlot = -1;
+        if(mode==ReanimateOtherMode.SC && !TryEnsureFullBoobSpriteBone(staged,parent,out sourceSlot))
+        {error="Could not bind the static parent of the SC region.";return false;}
         if (mode == ReanimateOtherMode.SRN && smoothRoot)
         {
             var sourceName = string.IsNullOrEmpty(rootSourceBone) ? bones[parent].name : rootSourceBone;
@@ -255,6 +304,19 @@ public partial class PsdLayerPreviewRenderer
             parent = index;
         }
         EnsureBoneWeightsArraySize(staged, staged.vertices.Length);
+        if(mode==ReanimateOtherMode.SC)
+            for(int i=0;i<staged.boneWeights.Length;i++)
+            {
+                // Repeated runs can arrive with this SC on the entire imported
+                // sprite. Strip only this region's previous influence; preserve
+                // other authored regions, and anchor unweighted space statically.
+                var old=staged.boneWeights[i];var values=new Dictionary<int,float>();
+                Add(old.boneIndex0,old.weight0);Add(old.boneIndex1,old.weight1);
+                Add(old.boneIndex2,old.weight2);Add(old.boneIndex3,old.weight3);
+                if(values.Count==0)values[sourceSlot]=1f;
+                staged.boneWeights[i]=BuildVertexFixWeight(values);
+                void Add(int bone,float value){if(value>0f)AccumulateWeightChannel(values,bone==map[0]?sourceSlot:bone,value);}
+            }
         for (var i = 0; i < staged.vertices.Length; i++)
         {
             if (!ContainsFaceMouthPoint(staged.vertices[i], region))
@@ -262,7 +324,7 @@ public partial class PsdLayerPreviewRenderer
             var weight = count == 1 ? BuildSingleBoneWeight(0) : EvaluateOtherChainWeight(staged.vertices[i], points);
             weight.boneIndex0 = map[weight.boneIndex0];
             weight.boneIndex1 = map[weight.boneIndex1];
-            if (sourceSlot >= 0)
+            if (mode==ReanimateOtherMode.SRN && sourceSlot >= 0)
                 weight = SmoothOtherChainRootWeight(staged.vertices[i], points, weight, map[0], sourceSlot);
             staged.boneWeights[i] = weight;
         }
@@ -322,11 +384,12 @@ public partial class PsdLayerPreviewRenderer
                 return;
         if (TryFindContainingTriangle(data.triangles, data.vertices, point,
                 out _, out _, out _, out _, out _, out _, out _, out _))
-            InsertAppliedVertexIntoLayerData(data, point, true, allowBoundarySnap: !exactBoundary);
+            InsertAppliedVertexIntoLayerData(data, point, true, allowBoundarySnap: !exactBoundary, optimizeQuality: false);
     }
 
     private void CommitOtherRegion(LayerInfo layer, LayerVertexData data, LayerVertexData staged)
     {
+        OptimizeLayerTriangleQuality(staged);
         data.vertices = staged.vertices;
         data.vertexUvs = staged.vertexUvs;
         data.triangles = staged.triangles;

@@ -56,16 +56,44 @@ public partial class PsdLayerPreviewRenderer
         var direction=legDirection.normalized;var back=-direction;
         float nearest=float.PositiveInfinity;int edge=-1;
         Vector2 hit=Vector2.zero;
-        for(int i=0;i<boundary.Count;i++)
+        // A clipped/occluded hip can leave the bone base outside its sprite.
+        // Prefer the original backward ray, then enter the visible leg forwards.
+        for(int cast=0;cast<2 && edge<0;cast++)
         {
-            var p=boundary[i];var segment=boundary[(i+1)%boundary.Count]-p;
-            float denominator=Cross(back,segment);
-            if(Mathf.Abs(denominator)<.0000001f)continue;
-            float t=Cross(p-origin,segment)/denominator,u=Cross(p-origin,back)/denominator;
-            if(t<-.00001f || u<-.00001f || u>1.00001f || t>=nearest)continue;
-            nearest=Mathf.Max(0,t);edge=i;hit=origin+back*nearest;
+            var ray=cast==0?back:direction;
+            for(int i=0;i<boundary.Count;i++)
+            {
+                var p=boundary[i];var segment=boundary[(i+1)%boundary.Count]-p;
+                float denominator=Cross(ray,segment);
+                if(Mathf.Abs(denominator)<.0000001f)continue;
+                float t=Cross(p-origin,segment)/denominator,u=Cross(p-origin,ray)/denominator;
+                if(t<-.00001f || u<-.00001f || u>1.00001f || t>=nearest)continue;
+                nearest=Mathf.Max(0,t);edge=i;hit=origin+ray*nearest;
+            }
         }
-        if(edge<0){error="The ray opposite the upper leg does not intersect the selected sprite contour.";return false;}
+        if(edge<0)
+        {
+            // If the axis misses the visible cap sideways, project its base onto
+            // the contour instead of inventing points outside the sprite.
+            for(int i=0;i<boundary.Count;i++)
+            {
+                var p=boundary[i];var delta=boundary[(i+1)%boundary.Count]-p;
+                float t=Mathf.Clamp01(Vector2.Dot(origin-p,delta)/Mathf.Max(delta.sqrMagnitude,1e-20f));
+                var candidate=p+delta*t;float distance=(candidate-origin).sqrMagnitude;
+                if(distance>=nearest)continue;
+                nearest=distance;edge=i;hit=candidate;
+            }
+        }
+        float cut=length*.25f;
+        float startAlong=Vector2.Dot(hit-origin,direction);
+        float farthest=boundary.Max(p=>Vector2.Dot(p-origin,direction));
+        if(farthest-startAlong<=.00001f)
+        {
+            edge=Enumerable.Range(0,boundary.Count).OrderBy(i=>Vector2.Dot(boundary[i]-origin,direction)).First();
+            hit=boundary[edge];startAlong=Vector2.Dot(hit-origin,direction);
+        }
+        if(cut<=startAlong+.00001f || cut>=farthest-.00001f)
+            cut=startAlong+Mathf.Min(length*.25f,(farthest-startAlong)*.5f);
         var forward=boundary[(edge+1)%boundary.Count]-hit;
         var reverse=boundary[edge]-hit;
         // At a vertex, use the next real edge rather than a zero tangent.
@@ -77,7 +105,7 @@ public partial class PsdLayerPreviewRenderer
         int step=alignment>=0?1:-1;
         int next=step>0?(edge+1)%boundary.Count:edge;
         var points=new List<Vector2>{hit};
-        float cut=length*.25f;var previous=hit;
+        var previous=hit;
         for(int walked=0;walked<=boundary.Count;walked++)
         {
             var p=boundary[next];

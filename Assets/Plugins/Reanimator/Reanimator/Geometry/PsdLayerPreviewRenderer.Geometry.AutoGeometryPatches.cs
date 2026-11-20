@@ -202,6 +202,11 @@ public partial class PsdLayerPreviewRenderer
                 continue;
             var indices = BuildImporterIndices(writeData, metaVertices.Length, importerIndices);
             var edges = BuildImporterEdgesFromIndices(indices, metaVertices.Length);
+            if(!ReanimatorImporterGeometryAlgorithms.IsWritableImporterMeshSane(metaVertices,indices,binding.rect,out _))
+            {
+                RepairCollapsedImporterGeometry(writeData,binding,ref metaVertices,ref indices,ref edges);
+                importerMode="raw_local";
+            }
             if (!ReanimatorImporterGeometryAlgorithms.IsWritableImporterMeshSane(
                     metaVertices,
                     indices,

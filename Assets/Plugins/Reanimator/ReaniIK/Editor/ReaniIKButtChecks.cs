@@ -7,6 +7,7 @@ public static class ReaniIKButtChecks
 {
     public static string Run()
     {
+        CheckAvailability();
         int cases=0;
         foreach(float mirror in new[]{1f,-1f})
         {
@@ -16,7 +17,7 @@ public static class ReaniIKButtChecks
                 root.transform.SetPositionAndRotation(new Vector3(2,-1,0),Quaternion.Euler(0,0,23));
                 root.transform.localScale=new Vector3(mirror*1.4f,.7f,1);
                 var hips=Bone(root.transform,"hips",Vector3.zero);
-                foreach(var name in new[]{"l_leg","r_leg"})
+                foreach(var name in new[]{"r_leg","l_leg"})
                 {
                     var leg=Bone(hips,name,new Vector3(name=="l_leg"?-1:1,-.5f,0));
                     leg.localRotation=Quaternion.Euler(0,0,-38);
@@ -30,6 +31,7 @@ public static class ReaniIKButtChecks
                 Bone(hips,"unpaired_booty",Vector3.zero);
                 var pairs=ReaniIKButtControls.FindPairs(root.transform);
                 Require(pairs.Count==2,"Both manual helper pairs must auto-detect, with no renderer or orphan pair.");
+                Require(pairs[0].leg.name=="l_leg" && pairs[1].leg.name=="r_leg","Left control must precede right regardless of hierarchy order.");
                 foreach(var pair in pairs)
                 {
                     var legPosition=pair.leg.localPosition;var legRotation=pair.leg.localRotation;
@@ -104,6 +106,32 @@ public static class ReaniIKButtChecks
         var pa0=a.position;var pb0=b.position;var along=a.TransformVector(Vector3.right).normalized*.2f;
         ReaniIKButtControls.MoveSquareWorld(pair,along);
         Require(Vector3.Distance((a.position-pa0)+(b.position-pb0),along)<.0001f,"Coincident helper axes amplified the drag.");
+    }
+
+    private static void CheckAvailability()
+    {
+        for(int mask=0;mask<4;mask++)
+        {
+            var root=new GameObject("Butt availability fixture");root.SetActive(false);
+            try
+            {
+                // Right first in the hierarchy deliberately tests stable ordering.
+                foreach(var side in new[]{1,0})
+                {
+                    string name=side==0?"l_leg":"r_leg";
+                    var leg=Bone(root.transform,name,Vector3.zero);
+                    if((mask&(1<<side))==0)continue;
+                    Bone(leg,ReaniIKButtControls.ParallelBoneName(name),Vector3.zero);
+                    Bone(leg,ReaniIKButtControls.PerpendicularBoneName(name),Vector3.zero);
+                }
+                var pairs=ReaniIKButtControls.FindPairs(root.transform);
+                Require(pairs.Count==((mask&1)!=0?1:0)+((mask&2)!=0?1:0),"Unavailable Side Ass reserved an empty control slot.");
+                if(mask==1)Require(pairs[0].leg.name=="l_leg","Left-only control must occupy the first slot.");
+                if(mask==2)Require(pairs[0].leg.name=="r_leg","Right-only control must occupy the first slot.");
+                if(mask==3)Require(pairs[0].leg.name=="l_leg" && pairs[1].leg.name=="r_leg","Both controls must be ordered left, right.");
+            }
+            finally{UnityEngine.Object.DestroyImmediate(root);}
+        }
     }
 
     private static Transform Bone(Transform parent,string name,Vector3 position)

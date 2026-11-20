@@ -114,11 +114,14 @@ public partial class Reanimator : EditorWindow
             {
                 EditorGUILayout.LabelField("Steps", EditorStyles.boldLabel);
                 EditorGUILayout.LabelField("A  Previous     D  Next", EditorStyles.miniLabel);
-                using (new EditorGUI.DisabledScope(!hasPsd || IsReanimateRestartPending))
+                using (new EditorGUI.DisabledScope(!hasPsd || IsReanimateRestartPending || reanimateRunning))
                 {
                     if (DrawReanimateIconButton("0. Restart", "Restore Pose") && ConfirmPsdReset(path, true))
                     {
                         StartReanimateChallenge(path, EditorApplication.timeSinceStartup);
+                        reanimateShowIdleMascot = true;
+                        reanimateIdleMascotError = false;
+                        reanimateIdleMascotSuccess = false;
                         reanimateRestartPath = path;
                         EditorApplication.delayCall += RunReanimateRestart;
                     }
@@ -131,8 +134,11 @@ public partial class Reanimator : EditorWindow
                     var active = grouped ? reanimateStep >= FirstReanimateLimbStep && reanimateStep < ReanimateOthersStep : reanimateStep == i;
                     var number = i < ReanimateOthersStep ? i + 1 : i - ReanimateOthersStep + 6;
                     var label = grouped ? "Soft Contour" : ReanimateStepNames[i];
-                    if (DrawReanimateIconButton($"{number}. {label}", grouped ? "SC" : label, active, true) && !active)
-                        SetReanimateStep(i);
+                    if (DrawReanimateIconButton($"{number}. {label}", grouped ? "SC" : label, active, true))
+                    {
+                        ResetSuccessfulMascotOnNavigation();
+                        if(!active)SetReanimateStep(i);
+                    }
                 }
 
                 var drawOthers = ready && reanimateStep == ReanimateOthersStep;
@@ -505,6 +511,9 @@ public partial class Reanimator : EditorWindow
                 return;
             }
             SetReanimateStep(0);
+            reanimateShowIdleMascot = true;
+            reanimateIdleMascotError = false;
+            reanimateIdleMascotSuccess = false;
             ShowNotification(new GUIContent(count > 0 ? $"Generated geometry: {count}" : "No missing geometry"));
         }
         finally
@@ -518,6 +527,7 @@ public partial class Reanimator : EditorWindow
     private bool TryRestartReanimateAsset(string path, out int count, out string error)
     {
         count = 0;
+        SaveReanimateDraftCache(beforeRun: true);
         if (!TryKillPsdData(path, out error))
             return false;
 
@@ -528,6 +538,9 @@ public partial class Reanimator : EditorWindow
         ReanimatorSkeletronModule.ClearPlacement(layerPreviewRenderer);
         reanimateLimbDrafts.Remove(path);
         reanimateOtherDrafts.Remove(path);
+        reanimateOtherBoobs.Remove(path);
+        reanimateOtherBelly.Remove(path);
+        reanimateOtherShoulders.Remove(path);
         layerPreviewRenderer.RefreshPreviewCache(path);
         return layerPreviewRenderer.GenerateMissingGeometry(path, out count, out error);
     }

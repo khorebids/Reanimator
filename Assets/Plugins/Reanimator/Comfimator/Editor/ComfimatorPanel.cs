@@ -1916,10 +1916,55 @@ internal sealed class ComfimatorPanel : IReanimatorExternalPanel, IReanimatorExt
     private async void RunAllIn(IReanimatorExternalPanelHost host) =>
         await RunAllInAutomationAsync(host, null, null);
 
-    public Task RunReanimateAsync(IReanimatorExternalPanelHost host, Func<string> applyManualSkeleton,
-        Func<string> applyContoursAndCook, Func<string> applyManualBelly = null) => RunAllInAutomationAsync(host,
-        applyManualSkeleton ?? throw new ArgumentNullException(nameof(applyManualSkeleton)),
-        applyContoursAndCook ?? throw new ArgumentNullException(nameof(applyContoursAndCook)), applyManualBelly);
+    public async Task RunReanimateAsync(IReanimatorExternalPanelHost host, Func<string> applyManualSkeleton,
+        Func<Task<string>> applyContoursAndCook, Func<string> applyManualBelly = null)
+    {
+        if (allInRunning || autoGeometryRunning || autoSkeletonRunning)
+            throw new InvalidOperationException("Another Reanimator automation is running.");
+        if (host is not IReanimatorAsyncProgressHost progressHost)
+            throw new InvalidOperationException("Reanimator progress host is unavailable.");
+        if (!host.TryValidateAllInPreflight(out var error))throw new InvalidOperationException(error);
+        if(IsAllInStageEnabled(AllInStage.Shoulders) && host.GetShoulderContourPreflightError() is string shoulderError)
+            throw new InvalidOperationException(shoulderError);
+        var path=host.CurrentAssetPath;
+        EnsureSettingsLoaded();
+        allInRunning=true;
+        allInResults.Clear();
+        try
+        {
+            await Stage("Generate Missing Geometry",AllInStage.MissingGeometry,host.GenerateMissingGeometry,.04f);
+            await Stage("Auto Geometry",AllInStage.Geometry,()=>RunAutoGeometry(host),.10f);
+            await progressHost.RunReanimateStageAsync("Skeleton",.16f,applyManualSkeleton);
+            await Stage("Auto Weights",AllInStage.Weights,()=>host.ApplyDeterministicAutoWeights(-1,false),.22f);
+            var limbSelection=EditorPrefs.GetInt(GetAllInTargetsKey(AllInStage.Limbs),-1);
+            if(IsAllInStageEnabled(AllInStage.Limbs))
+                for(int i=0;i<RemainingJointBits.Length;i++)
+                {
+                    if((limbSelection&(1<<i))==0)continue;
+                    var joint=RemainingJointBits[i];
+                    RequireCurrentAutomationAsset(host,path);
+                    await progressHost.RunReanimateStageAsync(AllInJoints[joint],.28f+.10f*i/RemainingJointBits.Length,
+                        ()=>string.Join("; ",host.ApplySelectedAutoLimbJoints(1<<joint)));
+                }
+            await Stage("Shoulders",AllInStage.Shoulders,host.ApplyShoulderContours,.38f);
+            if(applyManualBelly!=null)
+                await progressHost.RunReanimateStageAsync("Belly",.44f,applyManualBelly);
+            else await Stage("Belly",AllInStage.Belly,host.ApplyBellyLimb,.44f);
+            await Stage("Elbow",AllInStage.Elbows,()=>host.ApplyAutomaticElbowJoints(EditorPrefs.GetInt(AllInElbowsKey,-1)),.50f);
+            await Stage("Commit rest pose",AllInStage.RestPose,()=>{host.CommitCurrentBonePoseAsRest();return "Complete";},.55f);
+            await Stage("Face Eyes",AllInStage.FaceEyes,()=>RunFaceEyes(host),.60f);
+            RequireCurrentAutomationAsset(host,path);
+            actionStatus=await applyContoursAndCook();
+            allInResults["Complete"]=(1f,"Complete");
+        }
+        finally { allInRunning=false;allInActiveNode=null;host.RepaintHost(); }
+
+        async Task Stage(string title,AllInStage stage,Func<string> apply,float progress)
+        {
+            RequireCurrentAutomationAsset(host,path);
+            await progressHost.RunReanimateStageAsync(title,progress,()=>RunAllInNode(title,IsAllInStageEnabled(stage),apply));
+        }
+    }
 
     private async Task RunAllInAutomationAsync(IReanimatorExternalPanelHost host, Func<string> applyManualSkeleton,
         Func<string> applyContoursAndCook, Func<string> applyManualBelly = null)

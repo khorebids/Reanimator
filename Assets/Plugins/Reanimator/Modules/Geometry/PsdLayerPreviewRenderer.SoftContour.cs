@@ -192,6 +192,9 @@ public partial class PsdLayerPreviewRenderer
             return false;
         }
 
+        // Optimize the completed point batch once. Reoptimizing the entire
+        // mesh after every point makes a single contour stall the editor.
+        OptimizeLayerTriangleQuality(staged);
         var parent = bones[parentIndex];
         string name = parent.name + "_SC";
         int childIndex = bones.FindIndex(bone => bone.parentId == parentIndex && bone.name == name);
@@ -261,7 +264,7 @@ public partial class PsdLayerPreviewRenderer
             for (int i = 0; i < staged.vertices.Length; i++)
                 if ((staged.vertices[i] - point).sqrMagnitude <= 0.0001f) return i;
             int index = staged.vertices.Length;
-            return InsertAppliedVertexIntoLayerData(staged, point, true) &&
+            return InsertAppliedVertexIntoLayerData(staged, point, true, optimizeQuality: false) &&
                 System.Array.IndexOf(staged.triangles, index) >= 0 ? index : -1;
         }
     }

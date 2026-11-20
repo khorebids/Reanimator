@@ -85,6 +85,14 @@ public partial class PsdLayerPreviewRenderer
                     results.Add(spec.Label + ": sprite absent");
                     continue;
                 }
+                if(FindSplitArmLowerLayer(layer.name)!=null)
+                {
+                    // Already separated at the joint: the two sprites rotate
+                    // with their own segments. A single-mesh corrective fan
+                    // would inject lower-arm weights into the upper sprite.
+                    results.Add(spec.Label+": split sprites retain separate segment weights");
+                    continue;
+                }
                 SelectLayer(layer);
                 selectedBoneIndex = child;
                 if (!ApplyCorrectiveElbow(out var error))

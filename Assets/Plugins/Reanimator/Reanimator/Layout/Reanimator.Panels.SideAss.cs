@@ -7,6 +7,7 @@ public partial class Reanimator
     private void DrawSideAssPanel()
     {
         var renderer=layerPreviewRenderer;
+        renderer.SynchronizeSideAssCurveSettings();
         EditorGUILayout.HelpBox("Select the leg sprite and upper leg bone, then click Auto arc. It follows the contour from the backward bone ray to the perpendicular at 1/4 leg length. Manual drawing remains optional.",MessageType.Info);
         if(renderer.TryGetSelectedLayer(out var layer)) EditorGUILayout.LabelField("Sprite",layer.name);
         else EditorGUILayout.HelpBox("Select a leg sprite in the layer list.",MessageType.Warning);
@@ -20,10 +21,16 @@ public partial class Reanimator
         renderer.SideAssFanPoints=EditorGUILayout.IntSlider("Arc points",renderer.SideAssFanPoints,8,24);
         EditorGUI.BeginChangeCheck();
         EditorGUILayout.LabelField("Full arc — helper influence");
-        renderer.SideAssArcInfluence=EditorGUILayout.CurveField(renderer.SideAssArcInfluence,Color.cyan,new Rect(0,0,1,1),GUILayout.Height(75));
+        var arcInfluence=EditorGUILayout.CurveField(renderer.SideAssArcInfluence,Color.cyan,new Rect(0,0,1,1),GUILayout.Height(75));
         EditorGUILayout.LabelField("0–0.5: Back · 0.5–1: Perpendicular",EditorStyles.miniLabel);
-        renderer.SideAssHelperSmoothing=EditorGUILayout.Slider("Helper smoothing",renderer.SideAssHelperSmoothing,0,1);
-        if(EditorGUI.EndChangeCheck()){renderer.SaveAndApplySideAssCurves();Repaint();}
+        var helperSmoothing=EditorGUILayout.Slider("Helper smoothing",renderer.SideAssHelperSmoothing,0,1);
+        var bodyReach=EditorGUILayout.Slider(new GUIContent("Body continuation","Extend the same two helpers onto the hip/torso. Reach is relative to the Side Ass radius; zero disables the extension."),renderer.SideAssBodyReach,0,2);
+        if(EditorGUI.EndChangeCheck())
+        {
+            renderer.SideAssArcInfluence=arcInfluence;renderer.SideAssHelperSmoothing=helperSmoothing;
+            renderer.SideAssBodyReach=bodyReach;
+            renderer.SaveAndApplySideAssCurves();Repaint();
+        }
         renderer.SideAssFlip=EditorGUILayout.ToggleLeft("Flip back axis",renderer.SideAssFlip);
         if(GUILayout.Button("Build / refresh interactive preview",GUILayout.Height(28)))
         {renderer.BuildSideAssTest(out var previewMessage);ShowNotification(new GUIContent(previewMessage));Repaint();}

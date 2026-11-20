@@ -4,8 +4,41 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
-public partial class Reanimator : EditorWindow
+public partial class Reanimator : EditorWindow, IReanimatorAsyncProgressHost
 {
+    private float reanimateProgress;
+    private float reanimateDisplayedProgress;
+    private double reanimateProgressLastDraw;
+    private string reanimateProgressTitle;
+    private string reanimateRunPath;
+
+    public async System.Threading.Tasks.Task<string> RunReanimateStageAsync(string title, float progress, Func<string> apply)
+    {
+        RequireReanimateAsset(reanimateRunPath);
+        reanimateProgress=Mathf.Max(reanimateProgress,Mathf.Clamp01(progress));
+        reanimateProgressTitle=title;
+        Repaint();
+        // Return to the editor loop before each unit of work, allowing input
+        // and repaint events to run. Task.Yield alone can drain in one update.
+        var completion=new System.Threading.Tasks.TaskCompletionSource<string>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+        var due=EditorApplication.timeSinceStartup+.025;
+        EditorApplication.update+=Execute;
+        return await completion.Task;
+
+        void Execute()
+        {
+            if(EditorApplication.timeSinceStartup<due)return;
+            EditorApplication.update-=Execute;
+            var timer=System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                RequireReanimateAsset(reanimateRunPath);
+                completion.TrySetResult(RunNativeUndoGroup("Reanimate: "+title,apply));
+            }
+            catch(Exception exception){completion.TrySetException(exception);}
+            finally { Debug.Log($"[Reanimator][Stage] {title}: {timer.ElapsedMilliseconds} ms"); }
+        }
+    }
     private static readonly string[] ReanimateLimbRootBones = { "l_arm", "r_arm", "l_leg", "r_leg" };
     private static readonly string[][] ReanimateLowerLimbBones =
     {
@@ -32,7 +65,7 @@ public partial class Reanimator : EditorWindow
                     StartReanimateChallenge(path, EditorApplication.timeSinceStartup);
                 reanimateRunning = true;
                 reanimateResult = null;
-                EditorApplication.delayCall += () => RunReanimate(path);
+                RunReanimate(path);
             }
         }
         if (validation != null)
@@ -92,7 +125,16 @@ public partial class Reanimator : EditorWindow
             if (this == null)
                 return;
             RequireReanimateAsset(path);
+            SaveReanimateDraftCache(beforeRun: true);
             reanimateRunning = true;
+            reanimateRunPath = path;
+            reanimateProgress = 0f;
+            reanimateDisplayedProgress = 0f;
+            reanimateProgressLastDraw = EditorApplication.timeSinceStartup;
+            reanimateProgressTitle = "Preparing PSD";
+            Repaint();
+            await System.Threading.Tasks.Task.Delay(25);
+            RequireReanimateAsset(path);
             var renderer = layerPreviewRenderer;
             // A retry immediately after reload/rollback can still be rebuilding
             // its preview. Finish loading before any automation mutates the mesh.
@@ -110,6 +152,7 @@ public partial class Reanimator : EditorWindow
                 if (faceDraft != null && chestDraft != null)
                     RestoreReanimateDrafts(faceDraft, chestDraft);
             }
+            TickReanimateDraftCacheForRun(path);
             var validation = ValidateReanimateDrafts(path);
             if (validation != null)
                 throw new InvalidOperationException(validation);
@@ -118,6 +161,7 @@ public partial class Reanimator : EditorWindow
 
             var skeleton = ReanimatorSkeletronModule.CapturePlacement(Api);
             var bellyParentRoot = renderer.SkeletronBellyParentRoot;
+            var shoulderGuide = renderer.SkeletronShoulderGuideOffset;
             var belly = renderer.CaptureSoftContourBellyDraft();
             Func<string> applyBelly = null;
             if (belly.Length >= 3)
@@ -138,28 +182,30 @@ public partial class Reanimator : EditorWindow
             {
                 RequireReanimateAsset(path);
                 layerPreviewRenderer.SkeletronBellyParentRoot = bellyParentRoot;
+                layerPreviewRenderer.SkeletronShoulderGuideOffset = shoulderGuide;
                 if (!layerPreviewRenderer.TryApplySkeletron(skeleton, out var error, includeHeadControls: true))
                     throw new InvalidOperationException(error);
                 return $"Applied Skeletron: {layerPreviewRenderer.Bones.Count} bones";
-            }, () =>
+            }, async () =>
             {
                 RequireReanimateAsset(path);
-                var skinnedSprites = ApplyReanimateFaceAndChest(faceDraft, chestDraft);
-                ApplyReanimateOthers(others, skinnedSprites, chestDraft, belly);
-                ApplyReanimateSoftContours(limbs, skinnedSprites);
-                var sideAss=layerPreviewRenderer.ApplySelectedSideAss();
-                foreach(var leg in sideAss)
-                    if(!skinnedSprites.Contains(leg))skinnedSprites.Add(leg);
-                ApplyBeforeCookPrefab(path);
+                var skinnedSprites = await ApplyReanimateDraftGeometryAsync(faceDraft,chestDraft,others,belly,limbs);
+                await RunReanimateStageAsync("Apply PSD",.90f,()=>{ApplyBeforeCookPrefab(path);return "Complete";});
                 RestoreReanimateDrafts(faceDraft, chestDraft);
-                var cooked = ReanimatorPrefabCooker.CookNextToPsd(path, skinnedSprites, layerPreviewRenderer);
-                if (!string.IsNullOrEmpty(cooked.Error) || string.IsNullOrEmpty(cooked.PrefabAssetPath))
-                    throw new InvalidOperationException(cooked.Error ?? "Prefab cook returned no output.");
-                reanimateResult = cooked.ToStatus();
+                await RunReanimateStageAsync("Build prefab",.96f,()=>{
+                    var cooked = ReanimatorPrefabCooker.CookNextToPsd(path, skinnedSprites, layerPreviewRenderer);
+                    if (!string.IsNullOrEmpty(cooked.Error) || string.IsNullOrEmpty(cooked.PrefabAssetPath))
+                        throw new InvalidOperationException(cooked.Error ?? "Prefab cook returned no output.");
+                    reanimateResult = cooked.ToStatus();return reanimateResult;
+                });
                 reanimateResultError = false;
                 return reanimateResult;
             }, applyBelly);
             FinishReanimateChallenge(path, EditorApplication.timeSinceStartup, true);
+            reanimateProgress=1f;
+            reanimateProgressTitle="Complete";
+            Repaint();
+            await System.Threading.Tasks.Task.Delay(250);
             var seconds = Mathf.Max(0, (int)(reanimateChallengeFinish - reanimateChallengeStart));
             ShowReanimateSuccessNotification(seconds);
         }
@@ -176,6 +222,11 @@ public partial class Reanimator : EditorWindow
         finally
         {
             reanimateRunning = false;
+            reanimateShowIdleMascot = true;
+            reanimateIdleMascotError = reanimateResultError;
+            reanimateIdleMascotSuccess = !reanimateResultError;
+            if(this!=null && string.Equals(activeAssetPath,path,StringComparison.OrdinalIgnoreCase) &&
+                layerPreviewRenderer.IsPreviewCacheReady(path))RestoreReanimateDraftCache(path);
             if (this != null)
                 Repaint();
         }
@@ -185,6 +236,18 @@ public partial class Reanimator : EditorWindow
     {
         if (this == null || !string.Equals(GetSelectedAssetPath(), path, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The selected PSD changed during Reanimate.");
+    }
+
+    private async System.Threading.Tasks.Task<List<string>> ApplyReanimateDraftGeometryAsync(Vector2[][] faceDraft,
+        PsdLayerPreviewRenderer.ReanimateChestDraft chestDraft,List<OtherSpriteOperation> others,Vector2[] belly,Vector2[][][] limbs)
+    {
+        var sprites=await ApplyReanimateFaceAndChestAsync(faceDraft,chestDraft);
+        await ApplyReanimateOthersAsync(others,sprites,chestDraft,belly);
+        await ApplyReanimateSoftContoursAsync(limbs,sprites);
+        IReadOnlyList<string> sideAss=null;
+        await RunReanimateStageAsync("Side Ass",.86f,()=>{sideAss=layerPreviewRenderer.ApplySelectedSideAss();return "Complete";});
+        foreach(var leg in sideAss)if(!sprites.Contains(leg))sprites.Add(leg);
+        return sprites;
     }
 
     private void RestoreReanimateDrafts(Vector2[][] faceDraft, PsdLayerPreviewRenderer.ReanimateChestDraft chestDraft)
@@ -198,7 +261,7 @@ public partial class Reanimator : EditorWindow
             renderer.RestoreReanimateChestDraft(chest, chestDraft);
     }
 
-    private List<string> ApplyReanimateFaceAndChest(Vector2[][] faceDraft,
+    private async System.Threading.Tasks.Task<List<string>> ApplyReanimateFaceAndChestAsync(Vector2[][] faceDraft,
         PsdLayerPreviewRenderer.ReanimateChestDraft chestDraft)
     {
         var renderer = layerPreviewRenderer;
@@ -211,11 +274,17 @@ public partial class Reanimator : EditorWindow
         var previous = renderer.TryGetSelectedLayer(out var layer) ? layer : null;
         try
         {
-            renderer.SelectLayer(face);
-            if (!renderer.TryApplyFaceMouth(lowerLipMaxHeadWeight, upperLipMaxHeadWeight, out var error))
-                throw new InvalidOperationException("Face: " + error);
-            if (!renderer.TryApplyReanimateChest(chest, out error))
-                throw new InvalidOperationException("Chest: " + error);
+            await RunReanimateStageAsync("Face",.65f,()=>{
+                renderer.SelectLayer(face);
+                if (!renderer.TryApplyFaceMouth(lowerLipMaxHeadWeight, upperLipMaxHeadWeight, out var error))
+                    throw new InvalidOperationException("Face: " + error);
+                return "Complete";
+            });
+            await RunReanimateStageAsync("Chest",.69f,()=>{
+                if (!renderer.TryApplyReanimateChest(chest, out var error))
+                    throw new InvalidOperationException("Chest: " + error);
+                return "Complete";
+            });
         }
         finally
         {
@@ -224,7 +293,7 @@ public partial class Reanimator : EditorWindow
         return skinnedSprites;
     }
 
-    private void ApplyReanimateSoftContours(Vector2[][][] limbs, List<string> skinnedSprites)
+    private async System.Threading.Tasks.Task ApplyReanimateSoftContoursAsync(Vector2[][][] limbs, List<string> skinnedSprites)
     {
         var renderer = layerPreviewRenderer;
         for (var limb = 0; limb < limbs.Length; limb++)
@@ -236,10 +305,13 @@ public partial class Reanimator : EditorWindow
             var hips = step == ReanimateHipsStep;
             var root = hips ? "hips" : ReanimateLimbRootBones[limb];
             var lower = hips ? Array.Empty<string>() : ReanimateLowerLimbBones[limb];
-            if (!renderer.TryApplyReanimateLimbSc(sprite, root, lower, limbs[limb], out var applied, out var error))
-                throw new InvalidOperationException(ReanimateStepNames[step] + ": " + error);
-            if (applied && !skinnedSprites.Contains(sprite.name))
-                skinnedSprites.Add(sprite.name);
+            var contours=limbs[limb];
+            await RunReanimateStageAsync("Soft contour: "+sprite.name,.82f+.04f*limb/Math.Max(1,limbs.Length),()=>{
+                if (!renderer.TryApplyReanimateLimbSc(sprite, root, lower, contours, out var applied, out var error))
+                    throw new InvalidOperationException(ReanimateStepNames[step] + ": " + error);
+                if (applied && !skinnedSprites.Contains(sprite.name))skinnedSprites.Add(sprite.name);
+                return "Complete";
+            });
         }
     }
 

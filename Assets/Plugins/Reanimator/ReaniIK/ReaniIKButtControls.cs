@@ -32,8 +32,17 @@ public static class ReaniIKButtControls
             }
             if(parallel && perpendicular)result.Add(new Pair(leg,parallel,perpendicular));
         }
+        result.Sort((a,b)=>
+        {
+            int side=SideOrder(a.leg.name).CompareTo(SideOrder(b.leg.name));
+            return side!=0?side:StringComparer.OrdinalIgnoreCase.Compare(a.leg.name,b.leg.name);
+        });
         return result;
     }
+
+    private static int SideOrder(string name) =>
+        string.Equals(name,"l_leg",StringComparison.OrdinalIgnoreCase)?0:
+        string.Equals(name,"r_leg",StringComparison.OrdinalIgnoreCase)?1:2;
 
     private static Vector3 Axis(Transform bone)
     {

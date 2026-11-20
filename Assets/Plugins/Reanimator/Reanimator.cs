@@ -361,6 +361,7 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
         var window = GetWindow<Reanimator>(WindowTitle);
         if (!string.Equals(window.activeAssetPath, normalizedPath, StringComparison.OrdinalIgnoreCase))
         {
+            window.SaveReanimateDraftCache();
             window.activeAssetPath = normalizedPath;
             window.CancelBoneRename();
             window.EndDepthDrag();
@@ -458,6 +459,7 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
 
     private void OnDisable()
     {
+        SaveReanimateDraftCache();
         if (surfaceMaskPainter) { DestroyImmediate(surfaceMaskPainter); surfaceMaskPainter = null; }
         SaveFaceEyesWeightCurvePreference();
         SaveLimbsSettingsPreference();
@@ -937,6 +939,7 @@ public partial class Reanimator : EditorWindow, IReanimatorExternalPanelHost
 
     private void HandleEditorUpdate()
     {
+        TickReanimateDraftCache();
         TickReanimateChallengeTimer();
         TickReanimateSuccessNotification();
         if (layerPreviewRenderer == null)

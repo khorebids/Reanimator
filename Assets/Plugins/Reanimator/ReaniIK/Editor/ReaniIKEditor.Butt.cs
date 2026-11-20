@@ -34,7 +34,7 @@ public sealed partial class ReaniIKEditor
         foreach(var pair in buttPairs)
         {
             if(!pair.IsValid)continue;
-            var position=center-root.up*(size*1.65f*row++);
+            var position=center+root.right*(size*1.65f*row++);
             int hotBefore=GUIUtility.hotControl;
             if(hotBefore!=0 && hotBefore==activeButtControl && activeButtLeg==pair.leg)position=activeButtCenter;
             float radius=size*.6f*SceneControlScale;

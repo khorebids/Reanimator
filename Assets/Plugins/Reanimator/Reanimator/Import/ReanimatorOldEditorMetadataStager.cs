@@ -85,13 +85,13 @@ internal static class ReanimatorOldEditorMetadataStager
             source == null ||
             !target.isArray ||
             !source.isArray ||
-            SerializedProperty.EqualContents(target, source))
+            SerializedProperty.EqualContents(target, source) || SerializedProperty.DataEquals(target, source))
         {
             return false;
         }
 
         var changed = target.arraySize != source.arraySize;
-        target.arraySize = source.arraySize;
+        if (changed) target.arraySize = source.arraySize;
         for (var i = 0; i < source.arraySize; i++)
         {
             changed |= CopySerializedPropertyValue(
@@ -106,11 +106,28 @@ internal static class ReanimatorOldEditorMetadataStager
     {
         if (target == null || source == null)
             return false;
+        if (SerializedProperty.DataEquals(target, source))
+            return false;
+
+        // SpriteMetaData contains large vertex/weight arrays. Unity can copy
+        // the complete serializable value natively; walking every child via
+        // SerializedProperty makes Apply take minutes on generated meshes.
+        if (source.propertyType == SerializedPropertyType.Generic && !source.isArray)
+        {
+            try
+            {
+                target.boxedValue = source.boxedValue;
+                return true;
+            }
+            catch (InvalidOperationException) { }
+            catch (NotSupportedException) { }
+            catch (ArgumentException) { }
+        }
 
         if (source.isArray && source.propertyType != SerializedPropertyType.String)
         {
             var changed = target.arraySize != source.arraySize;
-            target.arraySize = source.arraySize;
+            if (changed) target.arraySize = source.arraySize;
             for (var i = 0; i < source.arraySize; i++)
             {
                 changed |= CopySerializedPropertyValue(

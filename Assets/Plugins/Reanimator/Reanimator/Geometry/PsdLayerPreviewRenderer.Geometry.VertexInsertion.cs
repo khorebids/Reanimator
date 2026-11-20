@@ -152,7 +152,7 @@ public partial class PsdLayerPreviewRenderer
     }
 
     private bool InsertAppliedVertexIntoLayerData(LayerVertexData data, Vector2 pointDoc, bool pointAlreadyInBaseSpace = false,
-        bool allowBoundarySnap = true)
+        bool allowBoundarySnap = true, bool optimizeQuality = true)
     {
         if (data == null || data.vertices == null || data.vertices.Length == 0)
             return false;
@@ -203,7 +203,7 @@ public partial class PsdLayerPreviewRenderer
         var boundaryEligible = allowBoundarySnap;
         for (var edge = 0; !boundaryEligible && data.boundaryEdgePairs != null && edge + 1 < data.boundaryEdgePairs.Length; edge += 2)
             boundaryEligible = DistancePointToSegment(basePointDoc, oldVertices[data.boundaryEdgePairs[edge]],
-                oldVertices[data.boundaryEdgePairs[edge + 1]]) <= 0.01f;
+                oldVertices[data.boundaryEdgePairs[edge + 1]]) <= 0.001f;
         int[] updatedBoundaryPairs = null;
         var hadBoundaryInsert = boundaryEligible &&
             TryInsertVertexIntoBoundaryLoop(data.boundaryEdgePairs, oldVertices, basePointDoc, oldCount, out updatedBoundaryPairs) &&
@@ -218,13 +218,13 @@ public partial class PsdLayerPreviewRenderer
                 data.boundaryEdgePairs = updatedBoundaryPairs;
                 if (!TryRetriangulateKeepingVertexSet(data))
                     TryRetriangulateWithDirectFallback(data);
-                OptimizeLayerTriangleQuality(data);
+                if (optimizeQuality) OptimizeLayerTriangleQuality(data);
                 BuildEdgePairs(data.triangles, data.vertices.Length, out data.allEdgePairs, out _);
                 data.boundaryEdgePairs = updatedBoundaryPairs;
             }
             else
             {
-                OptimizeLayerTriangleQuality(data);
+                if (optimizeQuality) OptimizeLayerTriangleQuality(data);
                 BuildEdgePairs(data.triangles, data.vertices.Length, out data.allEdgePairs, out data.boundaryEdgePairs);
             }
         }
@@ -238,7 +238,7 @@ public partial class PsdLayerPreviewRenderer
                 data.boundaryEdgePairs = updatedBoundaryPairs;
                 if (!TryRetriangulateKeepingVertexSet(data))
                     TryRetriangulateWithDirectFallback(data);
-                OptimizeLayerTriangleQuality(data);
+                if (optimizeQuality) OptimizeLayerTriangleQuality(data);
                 BuildEdgePairs(data.triangles, data.vertices.Length, out data.allEdgePairs, out _);
                 data.boundaryEdgePairs = updatedBoundaryPairs;
             }
@@ -275,7 +275,7 @@ public partial class PsdLayerPreviewRenderer
             return false;
 
         var minDistanceToEdge = Mathf.Min(dAB, Mathf.Min(dBC, dCA));
-        var edgeSnap = allowEdgeSnap ? Mathf.Max(0.45f, avgEdgeLength * 0.1f) : 0.01f;
+        var edgeSnap = allowEdgeSnap ? Mathf.Max(0.45f, avgEdgeLength * 0.1f) : 0.001f;
         if (minDistanceToEdge <= edgeSnap)
         {
             var edgeA = ia;

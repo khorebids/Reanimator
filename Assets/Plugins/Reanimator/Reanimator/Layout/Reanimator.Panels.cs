@@ -1354,6 +1354,8 @@ public partial class Reanimator : EditorWindow
             GUILayout.ExpandWidth(true),
             GUILayout.Height(NamingIndicatorFooterHeight));
 
+        if(reanimateRunning || reanimateSuccessUntil>EditorApplication.timeSinceStartup)return;
+        if(reanimateShowIdleMascot && DrawIdleMascotFooter(rect))return;
         var path = GetSelectedAssetPath();
         if (string.IsNullOrWhiteSpace(path) || !IsPsdImporterAsset(path))
             return;

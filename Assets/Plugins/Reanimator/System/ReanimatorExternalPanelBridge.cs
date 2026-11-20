@@ -50,7 +50,12 @@ public interface IReanimatorExternalPanel
 public interface IReanimatorReanimatePanel
 {
     System.Threading.Tasks.Task RunReanimateAsync(IReanimatorExternalPanelHost host, Func<string> applyManualSkeleton,
-        Func<string> applyContoursAndCook, Func<string> applyManualBelly = null);
+        Func<System.Threading.Tasks.Task<string>> applyContoursAndCook, Func<string> applyManualBelly = null);
+}
+
+public interface IReanimatorAsyncProgressHost
+{
+    System.Threading.Tasks.Task<string> RunReanimateStageAsync(string title, float progress, Func<string> apply);
 }
 
 public interface IReanimatorAllInGraphPanel

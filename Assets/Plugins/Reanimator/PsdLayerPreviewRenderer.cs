@@ -751,6 +751,7 @@ public partial class PsdLayerPreviewRenderer : ISerializationCallbackReceiver
 
     public void MarkDirty()
     {
+        DraftCacheGeneration++;
         EnsureRuntimeState();
         CancelPreviewCacheRefresh();
         // Keep cachedPath so a reselect of the same PSD does not look like a path switch.

@@ -139,12 +139,19 @@ public partial class PsdLayerPreviewRenderer
         bool ApplySegment(int bone, ref bool changed, out string message)
         {
             message = null;
+            var segmentMesh=mesh;
+            if(!string.Equals(bones[bone].name,rootBone,System.StringComparison.OrdinalIgnoreCase))
+            {
+                var lowerLayer=FindSplitArmLowerLayer(rootBone);
+                if(lowerLayer!=null && TryGetLayerVertexData(lowerLayer,out var lowerMesh))segmentMesh=lowerMesh;
+            }
+            if(FindSpriteBoneIndexForRendererBone(segmentMesh,bone)<0)return true;
             var pairs = new List<(Vector2 contour, Vector2 support, bool soften)>();
-            ProcessSoftContour(null, false, draw: false, maskedMesh: mesh, maskedBone: bone,
+            ProcessSoftContour(null, false, draw: false, maskedMesh: segmentMesh, maskedBone: bone,
                 masks: masks, maskedPairs: pairs);
             if (pairs.Count == 0)
                 return true;
-            if (!ApplySoftContourPairs(mesh, bone, pairs, out message,
+            if (!ApplySoftContourPairs(segmentMesh, bone, pairs, out message,
                     inheritParentOrder: !string.Equals(rootBone, "hips", System.StringComparison.OrdinalIgnoreCase)))
                 return false;
             changed = true;

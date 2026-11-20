@@ -290,6 +290,7 @@ public partial class PsdLayerPreviewRenderer
         return true;
     }
 
+
     private void RemapEditGeometrySelectionAfterVertexCull(IReadOnlyList<int> remap, string stableKey)
     {
         if (editGeometrySelectedVertexIndices == null)

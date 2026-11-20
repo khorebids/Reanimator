@@ -16,10 +16,25 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
         public Vector2 start, end;
         public int endpoint = -1;
         public Vector2[] points;
+        public Vector2 shoulderGuide, guideDragStart;
         public readonly HashSet<PsdLayerPreviewRenderer.LayerInfo> hiddenLayers = new();
     }
 
     private static readonly ConditionalWeakTable<PsdLayerPreviewRenderer, Placement> Placements = new();
+    [Serializable] private sealed class PlacementDraft
+    { public Vector2[] points; public bool extraArms, extraLegs; public Vector2 shoulderGuide; }
+    internal static string ExportDraft(Reanimator.SystemApi api)
+    {
+        var state=GetPlacement(api);
+        return JsonUtility.ToJson(new PlacementDraft{points=state?.points,extraArms=state?.extraArms??false,extraLegs=state?.extraLegs??false,shoulderGuide=state?.shoulderGuide??Vector2.zero});
+    }
+    internal static void ImportDraft(Reanimator.SystemApi api,string json)
+    {
+        if(string.IsNullOrEmpty(json))return;
+        var draft=JsonUtility.FromJson<PlacementDraft>(json);var state=GetPlacement(api);
+        Cancel(state);state.points=draft.points;state.extraArms=draft.extraArms;state.extraLegs=draft.extraLegs;
+        state.shoulderGuide=draft.shoulderGuide;api.PreviewRenderer.SkeletronShoulderGuideOffset=draft.shoulderGuide;
+    }
     private static readonly Vector2[] Template =
     {
         new(.50f, .48f), new(.50f, .55f), new(.50f, .65f), new(.50f, .78f), new(.50f, .86f), new(.50f, 1f),
@@ -83,6 +98,12 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
             EditorGUI.BeginChangeCheck();
             state.extraArms = EditorGUILayout.ToggleLeft("Additional Arms", state.extraArms);
             state.extraLegs = EditorGUILayout.ToggleLeft("Additional Legs", state.extraLegs);
+            if(state.points!=null)
+            {
+                EditorGUILayout.LabelField("Gold line: drag either end to set the spine / shoulders boundary.",EditorStyles.wordWrappedMiniLabel);
+                if(GUILayout.Button("Reset shoulder guide",EditorStyles.miniButton))
+                {state.shoulderGuide=Vector2.zero;api.PreviewRenderer.SkeletronShoulderGuideOffset=Vector2.zero;api.Repaint();}
+            }
             if (EditorGUI.EndChangeCheck())
                 api.Repaint();
         }
@@ -135,6 +156,8 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
                 return;
             if (state.endpoint >= 0)
                 MoveJoint(state.points, state.endpoint, state.start - state.end);
+            if(state.endpoint < -1)
+            {state.shoulderGuide=state.guideDragStart;api.PreviewRenderer.SkeletronShoulderGuideOffset=state.shoulderGuide;}
             Cancel(state);
         }
         else if (input.type == EventType.MouseDown && input.button == 0 && !input.alt &&
@@ -142,9 +165,11 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
         {
             if (!state.armed)
             {
-                state.endpoint = FindEndpoint(state.points, context.Coordinates, input.mousePosition, state.extraArms, state.extraLegs);
-                if (state.endpoint < 0)
+                state.endpoint = FindShoulderGuideEnd(state,context.Coordinates,input.mousePosition);
+                if(state.endpoint==-1)state.endpoint = FindEndpoint(state.points, context.Coordinates, input.mousePosition, state.extraArms, state.extraLegs);
+                if (state.endpoint == -1)
                     return;
+                state.guideDragStart=state.shoulderGuide;
             }
             state.control = GUIUtility.GetControlID(FocusType.Passive);
             GUIUtility.hotControl = state.control;
@@ -156,7 +181,14 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
                 return;
             var previous = state.end;
             state.end = context.Coordinates.ViewToDocument(input.mousePosition);
-            if (state.endpoint >= 0)
+            if(state.endpoint < -1)
+            {
+                var offset=(state.end-state.points[3])*(state.endpoint==-2?-1f:1f);
+                if(offset.sqrMagnitude>.0001f)state.shoulderGuide=offset;
+                api.PreviewRenderer.SkeletronShoulderGuideOffset=state.shoulderGuide;
+                if(input.type==EventType.MouseUp)Cancel(state);
+            }
+            else if (state.endpoint >= 0)
             {
                 MoveJoint(state.points, state.endpoint, state.end - previous);
                 if (input.type == EventType.MouseUp)
@@ -169,6 +201,7 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
                 if (Mathf.Abs(viewSize.x) >= 6f && Mathf.Abs(viewSize.y) >= 6f)
                 {
                     state.points = BuildPoints(bounds);
+                    state.shoulderGuide=Vector2.zero;api.PreviewRenderer.SkeletronShoulderGuideOffset=Vector2.zero;
                     Cancel(state);
                 }
                 else
@@ -196,6 +229,16 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
             return;
 
         Handles.BeginGUI();
+        var guide=ShoulderGuideOffset(points,state.shoulderGuide);
+        var guideA=context.Coordinates.DocumentToView(points[3]-guide);
+        var guideB=context.Coordinates.DocumentToView(points[3]+guide);
+        using(new Handles.DrawingScope(new Color(1f,.78f,.18f)))
+        {
+            Handles.DrawAAPolyLine(3f,guideA,guideB);
+            Handles.DrawSolidRectangleWithOutline(new Rect(guideA.x-5,guideA.y-5,10,10),new Color(1f,.78f,.18f),Color.black);
+            Handles.DrawSolidRectangleWithOutline(new Rect(guideB.x-5,guideB.y-5,10,10),new Color(1f,.78f,.18f),Color.black);
+            GUI.Label(new Rect(guideB.x+8,guideB.y-20,140,18),"Spine / shoulders",EditorStyles.whiteMiniLabel);
+        }
         using (new Handles.DrawingScope(new Color(0.35f, 0.95f, 0.95f)))
         {
             var coordinates = context.Coordinates;
@@ -229,9 +272,26 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
             Cancel(state);
             state.assetPath = path;
             state.points = null;
+            state.shoulderGuide=Vector2.zero;renderer.SkeletronShoulderGuideOffset=Vector2.zero;
             state.hiddenLayers.Clear();
         }
         return state;
+    }
+
+    private static Vector2 ShoulderGuideOffset(Vector2[] points,Vector2 manual)
+    {
+        if(manual.sqrMagnitude>.0001f)return manual;
+        var axis=points[4]-points[3];if(axis.sqrMagnitude<.0001f)axis=Vector2.up;
+        var side=new Vector2(axis.y,-axis.x).normalized;
+        return side*Mathf.Max(Vector2.Distance(points[6],points[10])*.5f,axis.magnitude);
+    }
+    private static int FindShoulderGuideEnd(Placement state,PsdCoordinateSpace coordinates,Vector2 mouse)
+    {
+        if(state.points==null)return -1;
+        var offset=ShoulderGuideOffset(state.points,state.shoulderGuide);
+        if(Vector2.Distance(coordinates.DocumentToView(state.points[3]-offset),mouse)<=10f)return -2;
+        if(Vector2.Distance(coordinates.DocumentToView(state.points[3]+offset),mouse)<=10f)return -3;
+        return -1;
     }
 
     internal static void CancelPlacement(PsdLayerPreviewRenderer renderer)

@@ -4,6 +4,86 @@ using UnityEngine;
 
 public sealed partial class ReaniIKEditor
 {
+    private static bool DrawFullResetButton(ReaniIK rig,Vector3 center,float radius)
+    {
+        var point=HandleUtility.WorldToGUIPoint(center);float bottom=point.y;
+        foreach(var axis in new[]{rig.transform.up,-rig.transform.up,rig.transform.right,-rig.transform.right})
+            bottom=Mathf.Max(bottom,HandleUtility.WorldToGUIPoint(center+axis*radius).y);
+        Handles.BeginGUI();bool clicked;
+        using(new EditorGUI.DisabledScope(!PrefabUtility.GetCorrespondingObjectFromSource(rig)))
+            clicked=GUI.Button(new Rect(point.x-43f,bottom+7f,86f,20f),
+                new GUIContent("Full Reset","Reset the entire character to its prefab, including all controls, bones, effects and overrides. Undo is available."),EditorStyles.miniButton);
+        Handles.EndGUI();
+        if(clicked)ResetAllToPrefab(rig);
+        return clicked;
+    }
+
+    internal static void ResetAllToPrefab(ReaniIK rig)
+    {
+        if(!rig)return;
+        var instance=PrefabUtility.GetNearestPrefabInstanceRoot(rig.gameObject);
+        var source=instance?PrefabUtility.GetCorrespondingObjectFromSource(instance):null;
+        if(!instance || !source)return;
+        rig.RestoreProceduralPoseForEditing();
+        rig.leftArmMask.Release();rig.rightArmMask.Release();rig.surfaceEffects.Release();
+        Undo.IncrementCurrentGroup();int group=Undo.GetCurrentGroup();
+        Undo.SetCurrentGroupName("Full Reset to Prefab");
+        Undo.RegisterFullObjectHierarchyUndo(instance,"Full Reset to Prefab");
+        // Clear procedural caches before Unity restores the serialized defaults.
+        rig.enabled=false;
+        PrefabUtility.RevertPrefabInstance(instance,InteractionMode.UserAction);
+        // Root transform values are Unity default overrides and are excluded
+        // from a normal Revert All. Full Reset explicitly restores those too.
+        Undo.RecordObject(instance.transform,"Full Reset to Prefab");
+        instance.transform.SetLocalPositionAndRotation(source.transform.localPosition,source.transform.localRotation);
+        instance.transform.localScale=source.transform.localScale;
+        instance.name=source.name;
+        PrefabUtility.RecordPrefabInstancePropertyModifications(instance.transform);
+        Undo.FlushUndoRecordObjects();
+        Undo.CollapseUndoOperations(group);
+        EditorApplication.QueuePlayerLoopUpdate();SceneView.RepaintAll();
+    }
+
+    internal static void ResetFaceToPrefab(ReaniIK rig)
+    {
+        if (!rig) return;
+        rig.RestoreProceduralPoseForEditing();
+        var bones = new System.Collections.Generic.List<Transform>();
+        var names = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+            { "head", "neck", "eyes", "eyelids", "mouth", "nose", "upper_lip", "lower_lip", "lip_corners" };
+        foreach (var bone in rig.GetComponentsInChildren<Transform>(true))
+            if (!bone.GetComponent<SpriteRenderer>() && (names.Contains(bone.name) || bone == rig.breathing.mouth || bone == rig.breathing.nose)) bones.Add(bone);
+        var objects = new System.Collections.Generic.List<Object> { rig };
+        objects.AddRange(bones);
+        Undo.IncrementCurrentGroup();
+        Undo.SetCurrentGroupName("Reset Face to Prefab");
+        Undo.RegisterCompleteObjectUndo(objects.ToArray(), "Reset Face to Prefab");
+        var prefab = PrefabUtility.GetCorrespondingObjectFromSource(rig);
+        var sourcePose = prefab ? prefab.facePose : new ReaniIKFacePose();
+        var pose = rig.facePose;
+        pose.headTurn = sourcePose.headTurn;
+        pose.neckTurn = sourcePose.neckTurn;
+        pose.gaze = sourcePose.gaze;
+        pose.upperLipHeight = sourcePose.upperLipHeight;
+        pose.upperLipSize = sourcePose.upperLipSize;
+        pose.lowerLipHeight = sourcePose.lowerLipHeight;
+        pose.lowerLipSize = sourcePose.lowerLipSize;
+        pose.lipCornersHeight = sourcePose.lipCornersHeight;
+        pose.eyelidClosure = sourcePose.eyelidClosure;
+        foreach (var bone in bones)
+        {
+            var source = PrefabUtility.GetCorrespondingObjectFromSource(bone);
+            if (!source) continue;
+            bone.SetLocalPositionAndRotation(source.localPosition, source.localRotation);
+            bone.localScale = source.localScale;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(bone);
+        }
+        rig.RefreshFacePoseForEditing();
+        PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
+        EditorApplication.QueuePlayerLoopUpdate();
+        SceneView.RepaintAll();
+    }
+
     internal static void ResetBodySizeToPrefab(ReaniIK rig)
     {
         if (!rig) return;

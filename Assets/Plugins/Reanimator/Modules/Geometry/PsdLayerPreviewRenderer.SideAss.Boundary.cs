@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -35,6 +36,52 @@ public partial class PsdLayerPreviewRenderer
     }
     private static float SideAssArcLength(IReadOnlyList<Vector2> points)
     {float length=0;for(int i=0;i+1<points.Count;i++)length+=Vector2.Distance(points[i],points[i+1]);return length;}
+    // Extra silhouette samples carry the changing skin weights between spokes.
+    // They lie on the same rest edges and do not add radial fan spokes or
+    // change the user's configured arc point count.
+    private static Vector2[] SideAssRefineBoundaryArc(Vector2[] arc,float maxSpan)
+    {
+        if(arc.Length<2)return arc;
+        var result=new List<Vector2>{arc[0]};
+        for(int i=0;i+1<arc.Length;i++)
+        {
+            int steps=Mathf.Clamp(Mathf.CeilToInt(Vector2.Distance(arc[i],arc[i+1])/Mathf.Max(.001f,maxSpan)),1,64);
+            for(int j=1;j<=steps;j++)result.Add(Vector2.Lerp(arc[i],arc[i+1],j/(float)steps));
+        }
+        return result.ToArray();
+    }
+    private void RefineSideAssClosedBoundary(LayerVertexData data,Vector2[] arc,float maxSpan)
+    {
+        RefineSideAssBoundaryWhere(data,(a,b)=>{
+            SideAssArcDistance(a,arc,out var da,out _);SideAssArcDistance(b,arc,out var db,out _);
+            return da<=.001f && db<=.001f;
+        },maxSpan);
+    }
+    private void RefineSideAssBoundaryWhere(LayerVertexData data,Func<Vector2,Vector2,bool> affected,float maxSpan)
+    {
+        // Split the already validated boundary triangles locally. Sending these
+        // collinear samples through the global constraint solver can create
+        // inconsistent seam subdivisions on repeated runs.
+        var boundary=data.boundaryEdgePairs.ToArray();
+        for(int e=0;e+1<boundary.Length;e+=2)
+        {
+            int a=boundary[e],b=boundary[e+1],previous=a;
+            if(!affected(data.vertices[a],data.vertices[b]))continue;
+            int steps=Mathf.Clamp(Mathf.CeilToInt(Vector2.Distance(data.vertices[a],data.vertices[b])/Mathf.Max(.001f,maxSpan)-.00001f),1,64);
+            for(int i=1;i<steps;i++)
+            {
+                float t=i/(float)steps;var point=Vector2.Lerp(data.vertices[a],data.vertices[b],t);
+                int index=data.vertices.Length;
+                if(!SplitTrianglesOnEdge(ref data.triangles,data.vertices,point,index,previous,b))continue;
+                System.Array.Resize(ref data.vertices,index+1);data.vertices[index]=point;
+                System.Array.Resize(ref data.vertexUvs,index+1);data.vertexUvs[index]=Vector2.Lerp(data.vertexUvs[a],data.vertexUvs[b],t);
+                System.Array.Resize(ref data.boneWeights,index+1);
+                data.boneWeights[index]=InterpolateBoneWeight(data.boneWeights[a],data.boneWeights[b],t,data.spriteBoneToRendererBone.Length);
+                previous=index;
+            }
+        }
+        BuildEdgePairs(data.triangles,data.vertices.Length,out data.allEdgePairs,out data.boundaryEdgePairs);
+    }
     private static Vector2[] SideAssExtendArc(IReadOnlyList<Vector2> boundary,Vector2[] arc,Vector2 center,out float prefixLength,out float suffixLength,bool extendEnd=true)
     {
         prefixLength=suffixLength=0;

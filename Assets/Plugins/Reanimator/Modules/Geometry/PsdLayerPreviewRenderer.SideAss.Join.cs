@@ -5,6 +5,49 @@ using UnityEngine;
 
 public partial class PsdLayerPreviewRenderer
 {
+    private static bool TryNormalizeSideAssTriangles(LayerVertexData data)
+    {
+        try {data.triangles=ReanimatorMeshWinding.Normalize(data.triangles,out _);return true;}
+        catch(System.InvalidOperationException){return false;}
+    }
+    internal static System.Action<string> SideAssJoinFailureProbe;
+    [System.Serializable] private sealed class SideAssJoinDiagnostic
+    { public string dataJson; public int[] exterior; public Vector2Int[] retained; public int[] local; }
+
+    private int[] NormalizeSideAssExterior(LayerVertexData data, int[] exterior)
+    {
+        var degree=new Dictionary<int,int>();
+        for(int i=0;i<exterior.Length;i++)degree[exterior[i]]=degree.TryGetValue(exterior[i],out var count)?count+1:1;
+        if(degree.Values.All(count=>count==2))return exterior;
+        var input=new List<Vector2Int>();
+        for(int i=0;i<exterior.Length;i+=2)input.Add(new Vector2Int(exterior[i],exterior[i+1]));
+        var graph=PlanarSideAssConstraints(data,input);
+        var adjacent=new Dictionary<int,List<int>>();
+        foreach(var edge in graph){Add(edge.x,edge.y);Add(edge.y,edge.x);}
+        foreach(var pair in adjacent)pair.Value.Sort((a,b)=>Mathf.Atan2(data.vertices[a].y-data.vertices[pair.Key].y,data.vertices[a].x-data.vertices[pair.Key].x).CompareTo(Mathf.Atan2(data.vertices[b].y-data.vertices[pair.Key].y,data.vertices[b].x-data.vertices[pair.Key].x)));
+        var visited=new HashSet<(int,int)>();List<int> outer=null;float largest=0;
+        foreach(var edge in graph)foreach(bool reverse in new[]{false,true})
+        {
+            int start=reverse?edge.y:edge.x,next=reverse?edge.x:edge.y,from=start,to=next;
+            if(visited.Contains((from,to)))continue;
+            var face=new List<int>();bool closed=false;
+            for(int guard=0;guard<=graph.Count*2;guard++)
+            {
+                if(!visited.Add((from,to)))break;
+                face.Add(from);var neighbors=adjacent[to];int index=neighbors.IndexOf(from);
+                int after=neighbors[(index-1+neighbors.Count)%neighbors.Count];from=to;to=after;
+                if(from==start && to==next){closed=true;break;}
+            }
+            if(!closed || face.Count<3)continue;
+            float area=0;
+            for(int i=0;i<face.Count;i++)area+=FullBoobCross(data.vertices[face[i]],data.vertices[face[(i+1)%face.Count]]);
+            // Clockwise faces are the outside of the planar arrangement. The
+            // overlapping cap's internal edges must not be treated as silhouette.
+            if(area<largest){largest=area;outer=face;}
+        }
+        return outer!=null?BuildBoundaryPairsFromLoop(outer):exterior;
+        void Add(int a,int b){if(!adjacent.TryGetValue(a,out var neighbors))adjacent[a]=neighbors=new List<int>();if(!neighbors.Contains(b))neighbors.Add(b);}
+    }
     private bool RepairSideAssJoin(LayerVertexData data,int[] exterior,List<Vector2Int> retained,List<int> local)
     {
         var required=new List<Vector2Int>();
@@ -25,10 +68,20 @@ public partial class PsdLayerPreviewRenderer
             if(TriangulateSideAssFaces(data,graph,exterior))return true;
             bool triangulated=TryRetriangulateFullBoobsConstraintSet(data,graph,data.vertices.Length,null,true);
             if(!triangulated)continue;
-            data.triangles=ReanimatorMeshWinding.Normalize(data.triangles,out _);
+            if(!TryNormalizeSideAssTriangles(data))continue;
             BuildEdgePairs(data.triangles,data.vertices.Length,out data.allEdgePairs,out data.boundaryEdgePairs);
             if(SideAssJoinIsClosed(data,exterior))return true;
         }
+        // Intersecting old support edges can leave an inconsistent constraint
+        // graph. Recover from the silhouette without changing vertex attributes.
+        data.boundaryEdgePairs=exterior;
+        if(TryRetriangulateKeepingVertexSet(data) || TryRetriangulateWithDirectFallback(data))
+        {
+            if(!TryNormalizeSideAssTriangles(data))return false;
+            BuildEdgePairs(data.triangles,data.vertices.Length,out data.allEdgePairs,out data.boundaryEdgePairs);
+            if(SideAssJoinIsClosed(data,exterior))return true;
+        }
+        SideAssJoinFailureProbe?.Invoke(JsonUtility.ToJson(new SideAssJoinDiagnostic{dataJson=JsonUtility.ToJson(data),exterior=exterior,retained=retained.ToArray(),local=local.ToArray()}));
         return false;
         IEnumerable<Vector2Int> Split(int a,int b)
         {
@@ -147,7 +200,8 @@ public partial class PsdLayerPreviewRenderer
             }
             if(pending.Count==3)Emit(pending[0],pending[1],pending[2]);
         }
-        data.triangles=ReanimatorMeshWinding.Normalize(triangles.ToArray(),out _);
+        data.triangles=triangles.ToArray();
+        if(!TryNormalizeSideAssTriangles(data))return false;
         BuildEdgePairs(data.triangles,data.vertices.Length,out data.allEdgePairs,out data.boundaryEdgePairs);
         return SideAssJoinIsClosed(data,exterior);
         void Add(int a,int b){if(!adjacent.TryGetValue(a,out var list))adjacent[a]=list=new List<int>();if(!list.Contains(b))list.Add(b);}

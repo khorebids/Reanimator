@@ -302,6 +302,7 @@ public partial class PsdLayerPreviewRenderer
         var data = plan.data;
         var sourceDraw = (Vector2[])GetLayerVerticesForDraw(data).Clone();
         var staged = CloneProjectorLayerData(data);
+        RemoveDuplicateElbowTriangles(staged);
         var rows = new int[2, 2, ElbowSampleCount];
         var parentRows = new int[2, 2, ElbowSampleCount];
         var middleIndices = new int[ElbowSampleCount];
@@ -430,6 +431,24 @@ public partial class PsdLayerPreviewRenderer
                         helperSlots[0], helperSlots[1], out var weight)) continue;
                 weights[vertex] = weight; desired[vertex] = point;
             }
+            // Keep the original silhouette samples. Deleting these points
+            // required a global retessellation and failed on repeated runs.
+            // Samples between the new rows receive the same continuous weights.
+            foreach(int vertex in plan.obsoleteContour)
+            {
+                if(weights.ContainsKey(vertex))continue;
+                float best=float.PositiveInfinity;BoneWeight replacement=default;
+                for(int side=0;side<2;side++)for(int i=1;i<ElbowSampleCount;i++)
+                {
+                    var a=plan.contour[side][i-1];var b=plan.contour[side][i];
+                    float distance=DistancePointToSegment(sourceDraw[vertex],a,b);
+                    if(distance>=best)continue;
+                    best=distance;float t=Mathf.Clamp01(Vector2.Dot(sourceDraw[vertex]-a,b-a)/Mathf.Max((b-a).sqrMagnitude,.000001f));
+                    replacement=BlendBoneWeights(ElbowSampleWeight(i-1,upper,lower,helperSlots[side]),1f-t,
+                        ElbowSampleWeight(i,upper,lower,helperSlots[side]),t,default,0f,null);
+                }
+                weights[vertex]=replacement;desired[vertex]=sourceDraw[vertex];
+            }
             staged.skinMatrices = new Matrix4x4[staged.bindBoneInverseMatrices.Length];
             foreach (var pair in weights)
             {
@@ -441,24 +460,15 @@ public partial class PsdLayerPreviewRenderer
                 staged.vertices[pair.Key] = basePoint;
                 staged.boneWeights[pair.Key] = pair.Value;
             }
-            var protectedPoints = new HashSet<int>();
-            foreach (var index in rows)
-                protectedPoints.Add(index);
-            foreach (var index in parentRows)
-                protectedPoints.Add(index);
-            foreach (var index in middleIndices)
-                if (index >= 0)
-                    protectedPoints.Add(index);
-            var remove = new List<int>();
-            foreach (var index in plan.obsoleteContour)
-                if (!protectedPoints.Contains(index))
-                    remove.Add(index);
-            if (remove.Count > 0 && !TryDeleteVerticesAndRebuild(staged, remove))
-            {
-                message = "Could not rebuild the elbow after removing old contour vertices.";
-                return false;
-            }
             BuildEdgePairs(staged.triangles, staged.vertices.Length, out staged.allEdgePairs, out staged.boundaryEdgePairs);
+            var exterior=NormalizeSideAssExterior(staged,staged.boundaryEdgePairs);
+            if(!SideAssJoinIsClosed(staged,exterior))
+            {
+                var constraints=new List<Vector2Int>();
+                for(int e=0;e+1<staged.allEdgePairs.Length;e+=2)constraints.Add(new Vector2Int(staged.allEdgePairs[e],staged.allEdgePairs[e+1]));
+                if(!RepairSideAssJoin(staged,exterior,constraints,new List<int>()))
+                {message="Could not close the elbow mesh along the retained contour.";return false;}
+            }
             CommitOtherRegion(data.layer, data, staged);
             committed = true;
             bones[plan.lower].depth = bones[plan.upper].depth + 1;
@@ -491,10 +501,7 @@ public partial class PsdLayerPreviewRenderer
             var index = FindPoint(basePoint);
             if (index < 0)
             {
-                index = staged.vertices.Length;
-                if (!InsertAppliedVertexIntoLayerData(staged, basePoint, true) ||
-                    Array.IndexOf(staged.triangles, index) < 0)
-                    return -1;
+                if(!TryInsertElbowVertexExact(staged,basePoint,out index))return -1;
             }
             desired[index] = point;
             return index;

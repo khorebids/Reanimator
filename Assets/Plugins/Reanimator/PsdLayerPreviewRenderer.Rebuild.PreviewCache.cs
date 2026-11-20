@@ -467,6 +467,7 @@ public partial class PsdLayerPreviewRenderer
 
         SetPreviewCacheRefreshProgress(0.98f, "Finalizing preview geometry...");
         yield return null;
+        DraftCacheGeneration++;
     }
 
 }

@@ -355,6 +355,7 @@ public sealed partial class ReaniIK : MonoBehaviour
         ReaniIKSurfaceEffects.RemoveLegacyPropertyBlocks(transform);
         surfaceEffects.RepairMissingMaterials(transform);
         ReaniIKLegSetup.Configure(this);
+        ReaniIKArmSetup.Configure(this);
         breathing.DiscoverFaceBones(transform);
         facePose.DiscoverBones(transform);
         if (softContour.bones == null || softContour.bones.Length == 0)
@@ -506,6 +507,8 @@ public sealed partial class ReaniIK : MonoBehaviour
         RestorePose();
         ResetSpringMotion();
     }
+
+    public void RefreshFacePoseForEditing() => facePose.DiscoverBones(transform);
 #endif
 
     internal static bool IsSoftContourBone(Transform bone)

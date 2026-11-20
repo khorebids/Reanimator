@@ -76,6 +76,7 @@ public sealed partial class ReaniIKEditor : Editor
         var rig = (ReaniIK)target;
         foreach (var bone in rig.GetComponentsInChildren<Transform>(true))
         {
+            if(bone.GetComponent<SpriteRenderer>())continue;
             switch (bone.name.ToLowerInvariant())
             {
                 case "hips": hips ??= bone; break;
@@ -313,10 +314,14 @@ public sealed partial class ReaniIKEditor : Editor
         }
         if (rig.showShouldersControl) DrawBoneControl(rig.transform, shoulders, spineControl + extraColumn, "Shoulders", bodyControlSize);
         if (rig.showRootControl)
+        {
+            var rootControl=hipsControl-rig.transform.up*(bodyControlSize*2f);
             DrawBoneControl(rig.transform, rootBone,
-                hipsControl - rig.transform.up * (bodyControlSize * 2f),
+                rootControl,
                 "Root", bodyControlSize);
-        if (rig.showNeckControl) DrawBoneControl(rig.transform, neck, neckControl, "Neck", bodyControlSize, allowMove: false);
+            if(DrawFullResetButton(rig,rootControl,HandleUtility.GetHandleSize(rootControl)*SceneControlScale*.76f))return;
+        }
+        // Neck rotation shares the head control as an outer lower semicircle.
         DrawButtControls(rig,hipsControl+extraColumn-rig.transform.up*(bodyControlSize*2f),bodyControlSize);
         DrawTarget(rig.leftArm, "Left hand", new Color(0.25f, 0.85f, 1f), isHand: true);
         DrawArmMaskControl(rig, rig.leftArm, rig.leftArmMask, "Left");
@@ -350,6 +355,26 @@ public sealed partial class ReaniIKEditor : Editor
         var radius = size * 0.6f * SceneControlScale;
         using var scope = new Handles.DrawingScope(SceneControlColor(new Color(0.65f, 1f, 0.45f)));
         Handles.DrawWireDisc(center, root.forward, radius, 3f);
+        var neckRadius=radius*1.4f;
+        if(pose.Neck)
+        {
+            Handles.DrawWireArc(center,root.forward,-root.right,180f,neckRadius,2f);
+            float neckAngle=Mathf.Clamp(pose.neckTurn,-1f,1f)*90f;
+            var thumb=center+(root.right*Mathf.Sin(neckAngle*Mathf.Deg2Rad)-root.up*Mathf.Cos(neckAngle*Mathf.Deg2Rad))*neckRadius;
+            EditorGUI.BeginChangeCheck();
+            var moved=Handles.Slider2D(thumb,root.forward,root.right,root.up,size*.065f*SceneControlScale,Handles.DotHandleCap,Vector2.zero);
+            if(EditorGUI.EndChangeCheck())
+            {
+                RecordFaceControl(rig,"Turn Neck");
+                var offset=moved-center;
+                pose.neckTurn=Mathf.Clamp(Mathf.Atan2(Vector3.Dot(offset,root.right),-Vector3.Dot(offset,root.up))*Mathf.Rad2Deg/90f,-1f,1f);
+                PrefabUtility.RecordPrefabInstancePropertyModifications(rig);
+            }
+            var neckLabel=center+root.right*(neckRadius+size*.15f)-root.up*(size*.2f);
+            ControlLabel(neckLabel,"Neck");
+            if(DrawCircleResetButton(neckLabel,"Neck",pose.Neck))
+            {RecordFaceControl(rig,"Reset Neck control");var source=PrefabUtility.GetCorrespondingObjectFromSource(rig);pose.neckTurn=source?source.facePose.neckTurn:0f;}
+        }
         var headLabel = center + root.right * (radius + size * .15f);
         ControlLabel(headLabel, "Head");
         var prefabRig = PrefabUtility.GetCorrespondingObjectFromSource(rig);
@@ -391,7 +416,7 @@ public sealed partial class ReaniIKEditor : Editor
             }
         }
 
-        var firstRow = center - root.up * (radius + size * 0.35f);
+        var firstRow = center - root.up * ((pose.Neck?neckRadius:radius) + size * 0.35f);
         pose.upperLipHeight = DrawFaceSlider(rig, firstRow, size, "Upper Lip Height", pose.upperLipHeight, -1f, pose.HasUpperLip);
         pose.upperLipSize = DrawFaceSlider(rig, firstRow - root.up * (size * SceneSliderSpacing), size,
             "Upper Lip X", pose.upperLipSize, -1f, pose.HasUpperLip);
@@ -406,8 +431,7 @@ public sealed partial class ReaniIKEditor : Editor
         var resetPosition = firstRow - root.up * (size * (SceneSliderSpacing*(rig.surfaceEffects.showControls?11:5)+.048f));
         if (Handles.Button(resetPosition, root.rotation, size * 0.10f, size * 0.14f, Handles.RectangleHandleCap))
         {
-            RecordFaceControl(rig, "Reset Face Controls");
-            pose.ResetControls();
+            ResetFaceToPrefab(rig);
             changed = true;
         }
         ControlLabel(resetPosition + root.right * (size * 0.16f), "Reset Face");

@@ -165,17 +165,20 @@ internal static class ReanimatorVertexInsertionAlgorithms
         if (vertices == null || triangles == null || vertices.Length < 4 || triangles.Length < 6)
             return;
 
-        // One pass performs one flip because all cached edge adjacency becomes stale
-        // immediately afterwards. Large projected meshes can require hundreds of
-        // legal flips; the previous fixed limit of 12 left visible triangle fans.
+        // A flip invalidates adjacency only for its two faces. Batch independent
+        // flips and rebuild adjacency once per pass, rather than rebuilding the
+        // complete mesh after each single flip.
         var maxPasses = Mathf.Clamp(triangles.Length * 4, 64, 50000);
         for (var pass = 0; pass < maxPasses; pass++)
         {
             var edges = BuildTriangleEdgeInfos(triangles, vertices.Length);
             var changed = false;
+            var modifiedFaces = new HashSet<int>();
             foreach (var edge in edges.Values)
             {
                 if (edge.useCount != 2 || edge.secondTriangle < 0)
+                    continue;
+                if (modifiedFaces.Contains(edge.firstTriangle) || modifiedFaces.Contains(edge.secondTriangle))
                     continue;
                 if (protectedEdges != null && protectedEdges.Contains(MakeEdgeKey(edge.a, edge.b)))
                     continue;
@@ -183,7 +186,8 @@ internal static class ReanimatorVertexInsertionAlgorithms
                     continue;
 
                 changed = true;
-                break;
+                modifiedFaces.Add(edge.firstTriangle);
+                modifiedFaces.Add(edge.secondTriangle);
             }
 
             if (!changed)

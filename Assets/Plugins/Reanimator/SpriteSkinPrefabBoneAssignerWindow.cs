@@ -2086,10 +2086,7 @@ internal static class ReanimatorPrefabCooker
         var spine = FindCreatedBone(createdBones, "spine");
         var count = 0;
         count += ReaniIKLegSetup.Configure(rig, createdBones, rigsRoot);
-        count += ConfigureLimb(rig.leftArm, "l_hand", false) ? 1 : 0;
-        count += ConfigureLimb(rig.rightArm, "r_hand", false) ? 1 : 0;
-        count += ConfigureLimb(rig.leftArm2, "l_hand_2", false) ? 1 : 0;
-        count += ConfigureLimb(rig.rightArm2, "r_hand_2", false) ? 1 : 0;
+        count += ReaniIKArmSetup.Configure(rig, createdBones, rigsRoot);
 
         rig.breasts.bones = ExistingBones(
             FindCreatedBone(createdBones, "nipple_l") ?? FindCreatedBone(createdBones, "l_nipple"),

@@ -11,6 +11,7 @@ public partial class PsdLayerPreviewRenderer
         Mathf.Max(5f, shoulderSpan * 0.08f);
 
     [SerializeField] internal bool SkeletronBellyParentRoot;
+    [SerializeField] internal Vector2 SkeletronShoulderGuideOffset;
 
     internal bool TryApplySkeletron(IReadOnlyList<(string name, int parent, Vector2 start, Vector2 end)> segments,
         out string error, bool includeHeadControls = false)

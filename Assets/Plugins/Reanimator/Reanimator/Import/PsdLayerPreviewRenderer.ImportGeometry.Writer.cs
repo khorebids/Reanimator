@@ -45,6 +45,7 @@ public partial class PsdLayerPreviewRenderer
             var indices = BuildImporterIndices(data, metaVertices.Length, importerIndices);
             var edges = BuildImporterEdgesFromIndices(indices, metaVertices.Length);
             var importerEdges = meshProvider.GetEdges(binding.spriteId) ?? Array.Empty<Vector2Int>();
+            RepairCollapsedImporterGeometry(data, binding, ref metaVertices, ref indices, ref edges);
             if (!ReanimatorImporterGeometryAlgorithms.IsWritableImporterMeshSane(
                     metaVertices,
                     indices,
@@ -68,6 +69,20 @@ public partial class PsdLayerPreviewRenderer
         }
 
         return changed;
+    }
+
+    private static void RepairCollapsedImporterGeometry(LayerVertexData data, LayerSpriteBinding binding,
+        ref Vertex2DMetaData[] vertices, ref int[] indices, ref Vector2Int[] edges)
+    {
+        if(ReanimatorImporterGeometryAlgorithms.IsWritableImporterMeshSane(vertices,indices,binding.rect,out _))return;
+        // A regenerated mesh is authoritative. The previous importer prefix may
+        // belong to another topology (or a collapsed pose), so it cannot serve
+        // as a barycentric coordinate reference for this mesh.
+        var repaired=BuildAutoGeometryMetaVertices(data,binding,null,null,"raw_local",out _);
+        var repairedIndices=BuildImporterIndices(data,repaired.Length,null);
+        if(!ReanimatorImporterGeometryAlgorithms.IsWritableImporterMeshSane(repaired,repairedIndices,binding.rect,out _))return;
+        vertices=repaired;indices=repairedIndices;
+        edges=BuildImporterEdgesFromIndices(indices,vertices.Length);
     }
 
     private static Vertex2DMetaData[] BuildMeshMetaVertices(

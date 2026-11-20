@@ -436,6 +436,7 @@ public partial class Reanimator : EditorWindow
 
         CommitTextFieldEdit();
         CommitBoneRename();
+        SaveReanimateDraftCache();
         activeAssetPath = selectedPath;
         return true;
     }

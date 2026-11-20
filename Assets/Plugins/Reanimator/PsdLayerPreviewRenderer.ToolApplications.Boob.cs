@@ -2166,11 +2166,23 @@ public partial class PsdLayerPreviewRenderer
         if (!TryBuildFinalMesh(fullBoobConstraints, retainedTopologyConstraints.Count) &&
             !TryBuildFinalMesh(fullBoobConstraints.GetRange(retainedTopologyConstraints.Count,
                 fullBoobConstraints.Count - retainedTopologyConstraints.Count), 0) &&
-            !TryBuildWholeMesh(true) && !TryBuildWholeMesh(false))
+            !TryBuildWholeMesh(true) && !TryBuildWholeMesh(false) && !TryRepairPairedJoin())
         {
             RestorePreviousState();
             error = (vGen ? "V-gen" : "FullBoobs") + " could not rebuild a closed mesh with the requested exterior";
             return false;
+        }
+
+        bool TryRepairPairedJoin()
+        {
+            var retainedEdges = new List<Vector2Int>();
+            for (int i = 0; i < retainedTopologyTriangles.Count; i += 3)
+                for (int edge = 0; edge < 3; edge++)
+                    retainedEdges.Add(new Vector2Int(retainedTopologyTriangles[i + edge],
+                        retainedTopologyTriangles[i + (edge + 1) % 3]));
+            // Resolve intersecting support graphs as planar cells. Accept only
+            // a closed result which also keeps every retained outside triangle.
+            return RepairSideAssJoin(data, exterior, retainedEdges, fullBoobLocalTriangles) && HasExpectedExterior();
         }
 
         bool TryBuildFinalMesh(IReadOnlyList<Vector2Int> constraints, int recoverableCount)
@@ -2247,18 +2259,12 @@ public partial class PsdLayerPreviewRenderer
                 triangleKeys.Add(MakeFullBoobTriangleKey(data.triangles[i], data.triangles[i + 1], data.triangles[i + 2]));
             for (var i = 0; i < retainedTopologyTriangles.Count; i += 3)
                 if (!triangleKeys.Contains(MakeFullBoobTriangleKey(retainedTopologyTriangles[i],
-                    retainedTopologyTriangles[i + 1], retainedTopologyTriangles[i + 2])))
+                    retainedTopologyTriangles[i + 1], retainedTopologyTriangles[i + 2])) &&
+                    !FullBoobRetainedTriangleCovered(data, retainedTopologyTriangles[i], retainedTopologyTriangles[i+1], retainedTopologyTriangles[i+2]))
                     return false;
             BuildEdgePairs(data.triangles, data.vertices.Length, out data.allEdgePairs, out data.boundaryEdgePairs);
-            if (data.boundaryEdgePairs.Length != exterior.Length)
-                return false;
-            var actual = new HashSet<ulong>();
-            for (var i = 0; i < data.boundaryEdgePairs.Length; i += 2)
-                actual.Add(MakeEdgeKey(data.boundaryEdgePairs[i], data.boundaryEdgePairs[i + 1]));
-            for (var i = 0; i < exterior.Length; i += 2)
-                if (!actual.Contains(MakeEdgeKey(exterior[i], exterior[i + 1])))
-                    return false;
-            return true;
+            return SideAssJoinIsClosed(data, exterior);
+
         }
         var smoothedVertices = vGen ? 0 : SmoothFullBoobRingWeights(data, smoothRingVertexIndices, 0.5f);
         MarkSkinningWeightsChanged(data);
