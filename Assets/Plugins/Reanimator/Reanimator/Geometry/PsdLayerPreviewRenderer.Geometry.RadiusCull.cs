@@ -88,6 +88,7 @@ public partial class PsdLayerPreviewRenderer
             RegisterUndo("Apply Radius Cull");
         if (!TryBuildBoundaryLoopFromPairs(data.boundaryEdgePairs, vertexCount, out var boundaryLoop))
             boundaryLoop = BuildFallbackBoundaryLoop(data.vertices, contourMask);
+        var boundaryLoops=BuildAllBoundaryLoops(data.boundaryEdgePairs,vertexCount);
 
         var remap = ReanimatorRadiusCullAlgorithms.BuildRemap(removeMask, out _);
         var keptVertices = new List<Vector2>(remainingVertexCount);
@@ -130,7 +131,17 @@ public partial class PsdLayerPreviewRenderer
         data.vertices = keptVertices.ToArray();
         data.vertexUvs = keptUvs.ToArray();
         data.boneWeights = keptWeights != null ? keptWeights.ToArray() : Array.Empty<BoneWeight>();
-        data.boundaryEdgePairs = BuildBoundaryPairsFromLoop(newBoundaryLoop);
+        if(boundaryLoops.Count>1)
+        {
+            var pairs=new List<int>();
+            foreach(var component in boundaryLoops)
+            {
+                var kept=BuildFilteredBoundaryLoop(component,removeMask,remap);
+                if(kept.Count>=3)pairs.AddRange(BuildBoundaryPairsFromLoop(kept));
+            }
+            data.boundaryEdgePairs=pairs.ToArray();
+        }
+        else data.boundaryEdgePairs = BuildBoundaryPairsFromLoop(newBoundaryLoop);
         data.triangles = RemapTrianglesAfterCull(data.triangles, removeMask, remap, data.vertices.Length);
         data.lastPoseVersion = -1;
         data.deformedVertices = null;
@@ -251,6 +262,7 @@ public partial class PsdLayerPreviewRenderer
 
             if (!TryBuildBoundaryLoopFromPairs(data.boundaryEdgePairs, vertexCount, out var boundaryLoop))
                 boundaryLoop = BuildFallbackBoundaryLoop(data.vertices, contourMask);
+            var boundaryLoops=BuildAllBoundaryLoops(data.boundaryEdgePairs,vertexCount);
 
             var remap = ReanimatorRadiusCullAlgorithms.BuildRemap(removeMask, out _);
             var keptVertices = new List<Vector2>(remainingVertexCount);
@@ -287,6 +299,17 @@ public partial class PsdLayerPreviewRenderer
             if (newBoundaryLoop.Count < 3)
                 return false;
 
+            var preservedBoundary=new List<int>();
+            if(boundaryLoops.Count>1)
+            {
+                foreach(var component in boundaryLoops)
+                {
+                    var kept=BuildFilteredBoundaryLoop(component,removeMask,remap);
+                    if(kept.Count>=3)preservedBoundary.AddRange(BuildBoundaryPairsFromLoop(kept));
+                }
+            }
+            else preservedBoundary.AddRange(BuildBoundaryPairsFromLoop(newBoundaryLoop));
+
             previewData = new LayerVertexData
             {
                 layer = data.layer,
@@ -296,7 +319,7 @@ public partial class PsdLayerPreviewRenderer
                 vertices = keptVertices.ToArray(),
                 vertexUvs = keptUvs.ToArray(),
                 boneWeights = keptWeights != null ? keptWeights.ToArray() : Array.Empty<BoneWeight>(),
-                boundaryEdgePairs = BuildBoundaryPairsFromLoop(newBoundaryLoop),
+                boundaryEdgePairs = preservedBoundary.ToArray(),
                 triangles = RemapTrianglesAfterCull(data.triangles, removeMask, remap, keptVertices.Count),
                 spriteBoneToRendererBone = data.spriteBoneToRendererBone,
                 bindBoneInverseMatrices = data.bindBoneInverseMatrices,

@@ -6,6 +6,7 @@ public partial class PsdLayerPreviewRenderer
 {
     internal sealed class ReanimateChestDraft
     {
+        internal int Mode=1;
         internal Vector2 LeftTarget, RightTarget;
         internal Vector2[] LeftContour, RightContour, LeftRaw, RightRaw;
     }
@@ -23,15 +24,45 @@ public partial class PsdLayerPreviewRenderer
         }
         return result;
     }
+    internal string GetReanimateFaceDraftError(LayerInfo layer)
+    {
+        if(!HasAnyFaceMouthContours)return null;
+        if(layer==null || CaptureReanimateFaceDraft(layer)==null)
+            return "Draw the mouth, both lips and nose on the Face step.";
+        return GetFaceMouthContourError();
+    }
+    internal bool TryBindReanimateFaceToHead(LayerInfo layer,out string error)
+    {
+        error=null;
+        if(layer==null || !TryGetLayerVertexData(layer,out var data) || data.vertices==null || data.vertices.Length==0)
+        {error="Face geometry is missing.";return false;}
+        if(!TryFindBoneIndexByName("head",out var head))
+        {error="Face requires the head bone.";return false;}
+        var staged=CloneProjectorLayerData(data);
+        ClearProjectorTargetSkinningData(staged,staged.vertices.Length);
+        if(!TryAppendSkinningTargetBone(staged,head,out var slot))
+        {error="Could not build the face head binding.";return false;}
+        var weights=new BoneWeight[data.vertices.Length];
+        for(int i=0;i<weights.Length;i++)weights[i]=BuildSingleBoneWeight(slot);
+        RegisterUndo("Bind Face to Head");
+        data.spriteBoneToRendererBone=staged.spriteBoneToRendererBone;
+        data.bindBoneInverseMatrices=staged.bindBoneInverseMatrices;
+        data.usesSpriteBindPoses=false;data.boneWeights=weights;
+        MarkSkinningWeightsChanged(data);
+        MarkEditGeometryDataChanged(data,BuildSelectionKey(layer),BuildKey(layer.name,layer.layerId));
+        return true;
+    }
 
     internal ReanimateChestDraft CaptureReanimateChestDraft()
     {
+        if(reanimateChestMode==0)return null;
         if (!CanApplyBoobV2() ||
             !IsPointInsideFullBoobContour(boobV2TargetADoc, boobV2ContourADoc) ||
             !IsPointInsideFullBoobContour(boobV2TargetBDoc, boobV2ContourBDoc))
             return null;
         return new ReanimateChestDraft
         {
+            Mode=reanimateChestMode,
             LeftTarget = boobV2TargetADoc,
             RightTarget = boobV2TargetBDoc,
             LeftContour = boobV2ContourADoc.ToArray(),
@@ -41,9 +72,14 @@ public partial class PsdLayerPreviewRenderer
         };
     }
 
+    internal bool HasAnyReanimateChestInput => boobV2HasTargetA || boobV2HasTargetB ||
+        boobV2ContourADoc.Count>0 || boobV2ContourBDoc.Count>0;
+    internal bool HasReanimateChestContours => boobV2ContourADoc.Count>0 || boobV2ContourBDoc.Count>0;
+
     internal void RestoreReanimateFaceDraft(LayerInfo layer, Vector2[][] contours)
     {
         ClearFaceMouthContours();
+        if(contours==null)return;
         faceMouthLayer = layer;
         for (var i = 0; i < contours.Length; i++)
             faceMouthContours[i].AddRange(contours[i]);
@@ -52,7 +88,10 @@ public partial class PsdLayerPreviewRenderer
     internal void RestoreReanimateChestDraft(LayerInfo layer, ReanimateChestDraft draft)
     {
         ClearBoobV2();
-        boobV2LayerStableKey = BuildKey(layer.name, layer.layerId);
+        if(draft==null)return;
+        reanimateChestMode=draft.Mode;
+        layer=layer??FindSeparatedChestSprite(0);
+        boobV2LayerStableKey = layer==null?string.Empty:BuildKey(layer.name, layer.layerId);
         boobV2TargetADoc = draft.LeftTarget;
         boobV2TargetBDoc = draft.RightTarget;
         boobV2HasTargetA = boobV2HasTargetB = true;
@@ -70,11 +109,13 @@ public partial class PsdLayerPreviewRenderer
             return false;
         }
 
+        if(reanimateChestMode==2)return TryApplySeparatedReanimateChest(out error);
+
         return TryPlaceFullBoobBones(layer, boobV2TargetADoc, boobV2TargetBDoc, out error) &&
             ApplyBoobV2(out _, out error, layer);
     }
 
-    private bool TryPlaceFullBoobBones(LayerInfo layer, Vector2 firstPoint, Vector2 secondPoint, out string error)
+    private bool TryPlaceFullBoobBones(LayerInfo layer, Vector2 firstPoint, Vector2 secondPoint, out string error,LayerInfo secondLayer=null)
     {
         error = null;
         if (!TryFindFullBoobSpineRendererBone(out var spine))
@@ -83,9 +124,11 @@ public partial class PsdLayerPreviewRenderer
             return false;
         }
         TryFindFullBoobRendererBones(out var left, out var right);
-        var sorted = firstPoint.x <= secondPoint.x;
-        var leftPoint = MapNippleGuessToBase(layer, sorted ? firstPoint : secondPoint);
-        var rightPoint = MapNippleGuessToBase(layer, sorted ? secondPoint : firstPoint);
+        var firstBase=MapNippleGuessToBase(layer,firstPoint);
+        var secondBase=MapNippleGuessToBase(secondLayer??layer,secondPoint);
+        var sorted = firstBase.x <= secondBase.x;
+        var leftPoint = sorted?firstBase:secondBase;
+        var rightPoint = sorted?secondBase:firstBase;
         var nippleSpan = Vector2.Distance(leftPoint, rightPoint);
         var shoulderSpan = TryFindBoneIndexByName("l_arm", out var leftShoulder) &&
                            TryFindBoneIndexByName("r_arm", out var rightShoulder)

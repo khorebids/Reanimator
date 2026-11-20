@@ -42,6 +42,9 @@ public partial class PsdLayerPreviewRenderer
             contour.Clear();
         faceMouthLayer = null;
     }
+    internal bool HasAnyFaceMouthContours => System.Array.Exists(faceMouthContours,c=>c.Count>0);
+    internal void DisableReanimateMouth()
+    {RegisterUndo("No Mouth");ClearFaceMouthContours();}
 
     internal void CancelFaceMouthStroke()
     {
@@ -113,7 +116,7 @@ public partial class PsdLayerPreviewRenderer
         for (var i = 0; i < faceMouthContours.Length; i++)
             DrawBoobV2Contour(coordinates.DocumentToView, faceMouthContours[i], FaceMouthContourColors[i], true);
         if (showNoseOuter && HasFaceMouthContour(NoseContourIndex) && HasFaceMouthContour(0) &&
-            TryPrepareNoseOuterContour(faceMouthContours[NoseContourIndex], faceMouthContours[0], out _, out var noseOuter))
+            TryPrepareNoseOuterContour(faceMouthContours[NoseContourIndex], faceMouthContours[0], out _, out var noseOuter,faceMouthContours[1],faceMouthContours[2]))
             DrawBoobV2Contour(coordinates.DocumentToView, noseOuter, new Color(0.6f, 1f, 0.6f), true);
         if (FaceMouthDrawingContour >= 0)
             DrawBoobV2Contour(coordinates.DocumentToView, faceMouthStroke, FaceMouthContourColors[FaceMouthDrawingContour], false);
@@ -169,8 +172,8 @@ public partial class PsdLayerPreviewRenderer
         if (!TryGetLayerVertexData(layer, out var data) || data?.vertices == null || data.triangles == null)
             return "The selected sprite needs geometry.";
         if (HasFaceMouthContour(NoseContourIndex) &&
-            !TryPrepareNoseOuterContour(faceMouthContours[NoseContourIndex], faceMouthContours[0], out _, out _))
-            return "The nose contour must be separate from the mouth and face it along an outward normal.";
+            !TryPrepareNoseOuterContour(faceMouthContours[NoseContourIndex], faceMouthContours[0], out _, out _,faceMouthContours[1],faceMouthContours[2]))
+            return "The nose contour must be separate from both lips and define a valid outer support.";
         return null;
     }
 
@@ -230,9 +233,9 @@ public partial class PsdLayerPreviewRenderer
         if (HasFaceMouthContour(NoseContourIndex))
         {
             var noseContour = MapFullBoobContourToBase(layer, faceMouthContours[NoseContourIndex]);
-            if (!TryPrepareNoseOuterContour(noseContour, contours[0], out noseCenter, out var noseOuter))
+            if (!TryPrepareNoseOuterContour(noseContour, contours[0], out noseCenter, out var noseOuter,contours[1],contours[2]))
             {
-                message = "The nose contour could not reach the mouth in the bind pose.";
+                message = "The nose outer support could not be built in the bind pose.";
                 return false;
             }
             noseCenterIndex = InsertPoint(noseCenter);
@@ -246,6 +249,11 @@ public partial class PsdLayerPreviewRenderer
                 return false;
             }
         }
+
+        // Sequential point insertion preserves the surface but leaves long, thin
+        // fans around the dense lip rings. Balance connectivity after all points
+        // are present; edge flips preserve positions, UVs and the exterior.
+        OptimizeLayerTriangleQuality(staged);
 
         RegisterUndo("Apply Face Mouth");
         var originalBoneCount = bones.Count;
@@ -352,8 +360,11 @@ public partial class PsdLayerPreviewRenderer
 
         // Rebuild the original mouth/lip assignments first, including the mouth
         // center and boundary. Only the head share inside the mouth becomes corners.
+        var noseProtected=new HashSet<int>(noseOuterIndices);
+        noseProtected.UnionWith(nosePointIndices);
+        if(noseCenterIndex>=0)noseProtected.Add(noseCenterIndex);
         for (var i = 0; i < staged.vertices.Length; i++)
-            if (!mouthBoundary.Contains(i) && DistanceToFullBoobContour(staged.vertices[i], contours[0]) > 0.001f &&
+            if (!noseProtected.Contains(i) && !mouthBoundary.Contains(i) && DistanceToFullBoobContour(staged.vertices[i], contours[0]) > 0.001f &&
                 ContainsFaceMouthPoint(staged.vertices[i], contours[0]))
                 staged.boneWeights[i] = RemapMouthInteriorHeadWeight(staged.boneWeights[i], headSlot, cornersSlot,
                     staged.spriteBoneToRendererBone.Length);
@@ -431,23 +442,29 @@ public partial class PsdLayerPreviewRenderer
             if (!TryFindContainingTriangle(staged.triangles, staged.vertices, point,
                     out _, out _, out _, out _, out _, out _, out _, out _))
                 return -1;
-            var index = staged.vertices.Length;
-            return InsertAppliedVertexIntoLayerData(staged, point, true) &&
-                   System.Array.IndexOf(staged.triangles, index) >= 0 ? index : -1;
+            return TryInsertElbowVertexExact(staged,point,out var index)?index:-1;
         }
     }
 
     private bool TryPrepareNoseOuterContour(
-        IReadOnlyList<Vector2> nose, IReadOnlyList<Vector2> mouth, out Vector2 center, out Vector2[] outer)
+        IReadOnlyList<Vector2> nose, IReadOnlyList<Vector2> mouth, out Vector2 center, out Vector2[] outer,
+        IReadOnlyList<Vector2> upperLip=null,IReadOnlyList<Vector2> lowerLip=null)
     {
         outer = null;
-        if (!TryGetVGenCenter(nose, out center) ||
-            ContainsFaceMouthPoint(center, mouth) ||
-            !TryBuildNoseOuterContour(nose, mouth, out outer))
-            return false;
+        if (!TryGetVGenCenter(nose, out center))return false;
+        // The mouth support outline may include the nose. The actual lips are
+        // the exclusion regions; an enclosing support outline is not a lip.
+        if(ContainsFaceMouthPoint(center,mouth)&&upperLip?.Count>=3&&lowerLip?.Count>=3)
+        {
+            foreach(var point in nose)if(ContainsFaceMouthPoint(point,upperLip)||ContainsFaceMouthPoint(point,lowerLip))return false;
+            mouth=DistanceToFullBoobContour(center,upperLip)<=DistanceToFullBoobContour(center,lowerLip)?upperLip:lowerLip;
+        }
+        if(ContainsFaceMouthPoint(center,mouth)||!TryBuildNoseOuterContour(nose,mouth,out outer))return false;
 
         OffsetNoseOuterContour(outer, new Vector2(NoseOuterOffset, NoseOuterOffsetY));
         PullNoseOuterContourAwayFromMouth(outer, mouth, center);
+        if(upperLip?.Count>=3)PullNoseOuterContourAwayFromMouth(outer,upperLip,center);
+        if(lowerLip?.Count>=3)PullNoseOuterContourAwayFromMouth(outer,lowerLip,center);
         outer = SplitFullBoobContour(outer, mouth).ToArray();
         return true;
     }
@@ -542,7 +559,10 @@ public partial class PsdLayerPreviewRenderer
             }
         }
         if (float.IsPositiveInfinity(offset))
-            return false;
+        {
+            foreach(var point in nose)offset=Mathf.Min(offset,DistanceToFullBoobContour(point,mouth));
+            if(!float.IsFinite(offset)||offset<=.001f)return false;
+        }
 
         outer = new Vector2[nose.Count];
         for (var i = 0; i < nose.Count; i++)

@@ -1520,6 +1520,7 @@ public partial class PsdLayerPreviewRenderer
     {
         if (toCanvas == null)
             return;
+        if(BoobToolVersion==3){DrawAssPreview(toCanvas);return;}
         if (BoobToolVersion == 2)
         {
             DrawSideAssPreview(toCanvas);

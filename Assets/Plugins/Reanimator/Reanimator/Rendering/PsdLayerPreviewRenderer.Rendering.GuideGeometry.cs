@@ -192,7 +192,7 @@ public partial class PsdLayerPreviewRenderer
         if (contourSteps <= 0 || contourStepDistance <= 0.0001f)
             return contourPoints.Count > 0;
 
-        if (!TryResolveContourLoopPoints(data, out var contourLoop) ||
+        if (!TryResolveContourLoopPoints(data, out var contourLoop,a) ||
             !TryBuildContourPerimeterSamples(contourLoop, out var segmentLengths, out var perimeterLength))
         {
             return contourPoints.Count > 0;
@@ -669,7 +669,7 @@ public partial class PsdLayerPreviewRenderer
         return bone != null ? bone.worldPosition : Vector2.zero;
     }
 
-    private bool TryResolveContourLoopPoints(LayerVertexData data, out List<Vector2> loopPoints)
+    private bool TryResolveContourLoopPoints(LayerVertexData data, out List<Vector2> loopPoints,Vector2? nearPoint=null)
     {
         loopPoints = new List<Vector2>();
         if (data == null)
@@ -680,7 +680,10 @@ public partial class PsdLayerPreviewRenderer
             return false;
 
         List<int> boundaryLoop;
-        if (!TryBuildBoundaryLoopFromPairs(data.boundaryEdgePairs, vertices.Length, out boundaryLoop) || boundaryLoop.Count < 3)
+        bool found=nearPoint.HasValue
+            ?TryBuildBoundaryLoopNearPoint(data.boundaryEdgePairs,vertices,nearPoint.Value,out boundaryLoop)
+            :TryBuildBoundaryLoopFromPairs(data.boundaryEdgePairs,vertices.Length,out boundaryLoop);
+        if (!found || boundaryLoop.Count < 3)
         {
             var contourMask = BuildContourVertexMask(data.boundaryEdgePairs, vertices.Length);
             boundaryLoop = BuildFallbackBoundaryLoop(vertices, contourMask);

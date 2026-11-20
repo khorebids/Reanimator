@@ -37,6 +37,8 @@ public partial class PsdLayerPreviewRenderer
         CancelSoftContourBellyStroke();
         softContourBellyContour.Clear();
     }
+    internal void DisableReanimateBelly()
+    {RegisterUndo("No Belly");ClearSoftContourBellyContour();}
 
     internal bool HandleSoftContourBellyInput(ReanimatorPreviewContext context)
     {
@@ -127,6 +129,19 @@ public partial class PsdLayerPreviewRenderer
             selectedLayerSelectionKey = previousLayer;
             selectedBoneIndex = previousBone;
         }
+    }
+
+    internal bool TryInheritReanimateBelly(LayerInfo target,Vector2[] contour,out string error)
+    {
+        error=null;
+        var body=layerInfos.Find(l=>l!=null&&(NormalizeAutoWeightName(l.name)=="body"||NormalizeAutoWeightName(l.name)=="torso"));
+        if(body==null){error="Body sprite is missing.";return false;}
+        if(body==target)return true;
+        if(contour==null||contour.Length<3){error="Belly contour is missing.";return false;}
+        var region=MapFullBoobContourToBase(body,contour);
+        // Clothing inherits the completed body surface only where they overlap.
+        // Its sprite does not need to contain the body's complete belly outline.
+        return TryInheritSurfaceRegion(target,new[]{body},p=>ContainsFaceMouthPoint(p,region),out error);
     }
 
     internal bool ApplySoftContourBelly(out string message)

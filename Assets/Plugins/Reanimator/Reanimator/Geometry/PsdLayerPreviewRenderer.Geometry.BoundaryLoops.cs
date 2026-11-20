@@ -5,6 +5,32 @@ using UnityEngine;
 
 public partial class PsdLayerPreviewRenderer
 {
+    private static List<List<int>> BuildAllBoundaryLoops(int[] pairs,int count)
+    {
+        var remaining=new List<int>(pairs??Array.Empty<int>());var result=new List<List<int>>();
+        while(remaining.Count>=6&&TryBuildBoundaryLoopFromPairs(remaining.ToArray(),count,out var loop))
+        {
+            var edges=new HashSet<ulong>();
+            for(int i=0;i<loop.Count;i++)edges.Add(MakeEdgeKey(loop[i],loop[(i+1)%loop.Count]));
+            int removed=0;
+            for(int i=remaining.Count-2;i>=0;i-=2)if(edges.Contains(MakeEdgeKey(remaining[i],remaining[i+1])))
+            {remaining.RemoveRange(i,2);removed++;}
+            if(removed==0)break;result.Add(loop);
+        }
+        return result;
+    }
+
+    private static bool TryBuildBoundaryLoopNearPoint(int[] pairs,Vector2[] vertices,Vector2 point,out List<int> loop)
+    {
+        loop=null;float best=float.PositiveInfinity;
+        foreach(var candidate in BuildAllBoundaryLoops(pairs,vertices.Length))
+        {
+            float distance=float.PositiveInfinity;
+            for(int i=0;i<candidate.Count;i++)distance=Mathf.Min(distance,DistancePointToSegment(point,vertices[candidate[i]],vertices[candidate[(i+1)%candidate.Count]]));
+            if(distance<best){best=distance;loop=candidate;}
+        }
+        return loop!=null;
+    }
     private static BoneWeight BuildSingleBoneWeight(int spriteBoneIndex)
     {
         var safeIndex = Mathf.Max(0, spriteBoneIndex);

@@ -103,13 +103,13 @@ public partial class PsdLayerPreviewRenderer
             sourceRect = source,
             textureRect = source
         };
-        var sourceVerticesAreLayerLocal = SnapshotVerticesLookLayerLocal(snapshot.verticesDoc, source);
         vertices = new Vector2[snapshot.verticesDoc.Length];
         for (var i = 0; i < vertices.Length; i++)
         {
-            var sourceLocal = sourceVerticesAreLayerLocal
-                ? snapshot.verticesDoc[i]
-                : PsdCoordinateSpace.DocumentToLayerLocalPoint(sourceLayer, snapshot.verticesDoc[i]);
+            // StoreDefaultGeometrySnapshot always stores document coordinates.
+            // A padded/repacked sprite rect can also contain those numeric values;
+            // that does not make them local. Guessing here adds the origin twice.
+            var sourceLocal = PsdCoordinateSpace.DocumentToLayerLocalPoint(sourceLayer, snapshot.verticesDoc[i]);
             var normalized = new Vector2(
                 Mathf.Clamp01(sourceLocal.x / source.width),
                 Mathf.Clamp01(sourceLocal.y / source.height));
@@ -122,27 +122,5 @@ public partial class PsdLayerPreviewRenderer
         return true;
     }
 
-    private static bool SnapshotVerticesLookLayerLocal(Vector2[] vertices, Rect source)
-    {
-        if (vertices == null || vertices.Length == 0 || source.width <= 0f || source.height <= 0f)
-            return false;
-
-        var marginX = Mathf.Max(4f, source.width * 0.05f);
-        var marginY = Mathf.Max(4f, source.height * 0.05f);
-        var inside = 0;
-        for (var i = 0; i < vertices.Length; i++)
-        {
-            var v = vertices[i];
-            if (!float.IsFinite(v.x) || !float.IsFinite(v.y))
-                return false;
-            if (v.x >= -marginX &&
-                v.y >= -marginY &&
-                v.x <= source.width + marginX &&
-                v.y <= source.height + marginY)
-                inside++;
-        }
-
-        return inside >= Mathf.Max(1, Mathf.CeilToInt(vertices.Length * 0.8f));
-    }
 }
 #endif

@@ -230,7 +230,7 @@ public partial class Reanimator : EditorWindow
         if (IsSpritePreviewMode(mode) || mode == PreviewMode.Reanimate)
         {
             CommitBoneEditRestPoseIfLeaving(ReanimatorToolMode.NoSettings);
-            CancelActivePreviewTool();
+            CancelActivePreviewTool(mode == PreviewMode.Reanimate);
         }
 
         previewMode = mode;
@@ -280,8 +280,12 @@ public partial class Reanimator : EditorWindow
             SetBottomToolMode(normalizedMode);
     }
 
-    private void CancelActivePreviewTool()
+    private void CancelActivePreviewTool(bool enteringReanimate = false)
     {
+        // Ending a gesture while navigating must not erase the saved Reanimate
+        // inputs. CancelBoobTool also clears the shared breast contour storage.
+        var drafts = (enteringReanimate || previewMode == PreviewMode.Reanimate)
+            ? layerPreviewRenderer?.ExportReanimateDraftCache() : null;
         SetBottomToolMode(bottomToolMode);
         ReanimatorSkeletronModule.CancelPlacement(layerPreviewRenderer);
         layerPreviewRenderer?.CancelElbowTool();
@@ -295,6 +299,7 @@ public partial class Reanimator : EditorWindow
         layerPreviewRenderer?.CancelWeightSliderTool();
         layerPreviewRenderer?.CancelWeightBrushTool();
         layerPreviewRenderer?.CancelVolumeCurveTool();
+        if(drafts != null)layerPreviewRenderer.ImportReanimateDraftCache(drafts);
     }
 
     private void SetBottomToolMode(ReanimatorToolMode mode)

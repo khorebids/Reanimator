@@ -21,12 +21,31 @@ public static class ReanimatorPrefabArmLayers
         var originals = renderers.Where(renderer => renderer != rig.leftArmMask.backRenderer &&
             renderer != rig.rightArmMask.backRenderer).ToArray();
         if (originals.Length == 0) return 0;
-        int max = originals.Max(SourceOrder);
         var bodyAndLegs = originals.Where(renderer => renderer.sprite &&
             (string.Equals(renderer.sprite.name, "body", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(renderer.sprite.name, "l_leg", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(renderer.sprite.name, "r_leg", StringComparison.OrdinalIgnoreCase))).ToArray();
         int min = (bodyAndLegs.Length > 0 ? bodyAndLegs : originals).Min(SourceOrder);
+        // Reserve an actual slot above lower artwork. min - 1 can equal the
+        // background order, making the rear arms disappear depending on tie order.
+        var lower = originals.Where(renderer => SourceOrder(renderer) < min).ToArray();
+        if (lower.Length > 0)
+        {
+            int shift = Mathf.Max(0, lower.Max(SourceOrder) + 2 - min);
+            if (shift > 0)
+            {
+                foreach (var renderer in originals)
+                {
+                    int order = SourceOrder(renderer);
+                    if (order < min) continue;
+                    if (renderer == rig.leftArmMask.frontRenderer) rig.leftArmMask.sourceSortingOrder = order + shift;
+                    else if (renderer == rig.rightArmMask.frontRenderer) rig.rightArmMask.sourceSortingOrder = order + shift;
+                    else renderer.sortingOrder = order + shift;
+                }
+                min += shift;
+            }
+        }
+        int max = originals.Max(SourceOrder);
         int added = 0;
         Build(rig.leftArmMask);
         Build(rig.rightArmMask);

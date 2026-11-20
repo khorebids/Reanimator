@@ -156,6 +156,16 @@ public sealed partial class ReaniIK : MonoBehaviour
             defaultTip = tip.localRotation;
         }
 
+        public void MatchAuthoredBend()
+        {
+            if (!upper || !lower || !tip) return;
+            Vector2 first = upper.InverseTransformPoint(lower.position);
+            Vector2 end = upper.InverseTransformPoint(tip.position);
+            float cross = first.x * end.y - first.y * end.x;
+            if (Mathf.Abs(cross) > 0.00001f * first.magnitude * end.magnitude)
+                flip = cross > 0f;
+        }
+
         public void RestorePose()
         {
             if (!applied) return;
@@ -310,6 +320,7 @@ public sealed partial class ReaniIK : MonoBehaviour
     public ReaniIKBodyScale bodyScale = new ReaniIKBodyScale();
     [Range(0f, 1f)] public float ikWeight = 1f;
     public BreastSpringGroup breasts = new BreastSpringGroup();
+    public BreastSpringGroup ass = new BreastSpringGroup();
     public SpringGroup softContour = new SpringGroup();
     public SpringGroup springRotation = new SpringGroup { maximumOffset = 0.5f };
     public SpringGroup frontHair = new SpringGroup { frequency = 2.8f, damping = 0.3f, maximumOffset = 0.1f };
@@ -449,6 +460,7 @@ public sealed partial class ReaniIK : MonoBehaviour
         rightLeg.Solve(ikWeight, deltaTime);
         EvaluateHiddenBoneRigs(deltaTime);
         breasts.Simulate(deltaTime, gravitySag: breasts.gravitySag);
+        ass.Simulate(deltaTime, gravitySag: ass.gravitySag);
         softContour.Simulate(deltaTime);
         frontHair.Simulate(deltaTime);
         backHair.Simulate(deltaTime);
@@ -489,6 +501,7 @@ public sealed partial class ReaniIK : MonoBehaviour
         vModeOffsets.Clear();
         springRotation.RestorePose();
         breasts.RestorePose();
+        ass.RestorePose();
         softContour.RestorePose();
         frontHair.RestorePose();
         backHair.RestorePose();
@@ -507,6 +520,7 @@ public sealed partial class ReaniIK : MonoBehaviour
     {
         springRotation.Reset();
         breasts.Reset();
+        ass.Reset();
         softContour.Reset();
         frontHair.Reset();
         backHair.Reset();

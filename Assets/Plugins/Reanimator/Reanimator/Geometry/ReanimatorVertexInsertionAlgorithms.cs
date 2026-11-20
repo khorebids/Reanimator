@@ -114,19 +114,15 @@ internal static class ReanimatorVertexInsertionAlgorithms
             return false;
         if (verticesBeforeInsert == null || verticesBeforeInsert.Length < 3)
             return false;
-        if (!TryBuildBoundaryLoopFromPairs(boundaryEdgePairs, verticesBeforeInsert.Length, out var boundaryLoop))
-            return false;
-        if (boundaryLoop == null || boundaryLoop.Count < 3)
-            return false;
 
         var bestSegmentIndex = -1;
         var bestDistance = float.PositiveInfinity;
         var lengthSum = 0f;
         var validLengthCount = 0;
-        for (var i = 0; i < boundaryLoop.Count; i++)
+        for (var i = 0; i < boundaryEdgePairs.Length/2; i++)
         {
-            var aIndex = boundaryLoop[i];
-            var bIndex = boundaryLoop[(i + 1) % boundaryLoop.Count];
+            var aIndex = boundaryEdgePairs[i*2];
+            var bIndex = boundaryEdgePairs[i*2+1];
             if (aIndex < 0 || bIndex < 0 || aIndex >= verticesBeforeInsert.Length || bIndex >= verticesBeforeInsert.Length)
                 continue;
 
@@ -155,8 +151,11 @@ internal static class ReanimatorVertexInsertionAlgorithms
         if (bestDistance > snapDistance)
             return false;
 
-        boundaryLoop.Insert(bestSegmentIndex + 1, newIndex);
-        updatedBoundaryPairs = ReanimatorEditGeometryAlgorithms.BuildBoundaryPairsFromLoop(boundaryLoop);
+        var pairs=new List<int>(boundaryEdgePairs);
+        int first=pairs[bestSegmentIndex*2],last=pairs[bestSegmentIndex*2+1];
+        pairs.RemoveRange(bestSegmentIndex*2,2);
+        pairs.InsertRange(bestSegmentIndex*2,new[]{first,newIndex,newIndex,last});
+        updatedBoundaryPairs = pairs.ToArray();
         return updatedBoundaryPairs != null && updatedBoundaryPairs.Length >= 6;
     }
 

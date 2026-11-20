@@ -5,6 +5,21 @@ using UnityEngine;
 
 public partial class PsdLayerPreviewRenderer
 {
+    public static string VerifyShoulderPreservesDistalWeights()
+    {
+        var original=BuildLimbTwoBoneWeight(3,.7f,4,.3f);
+        foreach(float t in new[]{0f,.25f,.5f,.75f,1f})
+        {
+            var weight=BlendShoulderTransition(original,t,0);
+            if(Mathf.Abs(GetSpriteBoneWeight(weight,3)-.7f*t)>.00001f ||
+                Mathf.Abs(GetSpriteBoneWeight(weight,4)-.3f*t)>.00001f ||
+                Mathf.Abs(GetSpriteBoneWeight(weight,0)-(1-t))>.00001f)
+                throw new Exception("Shoulder transition overwrote forearm/hand skinning.");
+            var limited=ConstrainShoulderWeights(original,weight,1,0,2);
+            if(!AreBoneWeightsApproximatelyEqual(limited,original))throw new Exception("Shoulder helper reached a purely distal arm vertex.");
+        }
+        return "PASS: shoulder transition preserves forearm/hand proportions at five falloff levels; distal endpoint retains exact weights.";
+    }
     public static string VerifyCapturedShoulderClothingCoverage()
     {
         var fixture=Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText("Assets/Plugins/Reanimator/Tests/Fixtures/ShoulderClothingCoverage.json"));

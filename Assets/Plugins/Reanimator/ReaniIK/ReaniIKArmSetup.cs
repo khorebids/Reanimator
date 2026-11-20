@@ -10,6 +10,7 @@ public static class ReaniIKArmSetup
         int count=0;
         Setup(rig.leftArm,"l",false);Setup(rig.rightArm,"r",false);
         Setup(rig.leftArm2,"l",true);Setup(rig.rightArm2,"r",true);
+        rig.SynchronizeAnimationControls();
         return count;
         Transform Find(string name)=>bones.FirstOrDefault(b=>b && !b.GetComponent<SpriteRenderer>() && string.Equals(b.name,name,StringComparison.OrdinalIgnoreCase));
         void Setup(ReaniIK.Limb limb,string side,bool second)
@@ -33,7 +34,7 @@ public static class ReaniIKArmSetup
             if(created){target=new GameObject(name).transform;target.SetParent(controls,false);}
             if(created || changed)target.SetPositionAndRotation(last.position,last.rotation);
             limb.upper=first;limb.lower=middle;limb.tip=last;limb.target=target;limb.softnessSource=Find("spine");
-            if(created || changed)limb.CaptureDefaultPose();
+            if(created || changed){limb.MatchAuthoredBend();limb.CaptureDefaultPose();}
             count++;
         }
     }

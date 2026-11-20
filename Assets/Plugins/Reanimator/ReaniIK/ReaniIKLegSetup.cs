@@ -10,6 +10,7 @@ public static class ReaniIKLegSetup
         int count = 0;
         if (ConfigureLeg(rig.leftLeg, "l")) count++;
         if (ConfigureLeg(rig.rightLeg, "r")) count++;
+        rig.SynchronizeAnimationControls();
         return count;
 
         Transform Find(string name) => bones.FirstOrDefault(bone => bone &&
@@ -52,7 +53,7 @@ public static class ReaniIKLegSetup
             limb.tip = last;
             limb.target = target;
             limb.softnessSource = Find("spine");
-            if (created || changed) limb.CaptureDefaultPose();
+            if (created || changed) { limb.MatchAuthoredBend(); limb.CaptureDefaultPose(); }
             return true;
         }
     }

@@ -7,6 +7,34 @@ using UnityEngine.U2D.Animation;
 
 public static class ReanimatorArmLayerChecks
 {
+    public static string VerifyRearOrderGap(GameObject source)
+    {
+        var copy=UnityEngine.Object.Instantiate(source);copy.SetActive(false);
+        try
+        {
+            var rig=copy.GetComponent<ReaniIK>();
+            int[] first=null;
+            for(int pass=0;pass<2;pass++)
+            {
+                ReanimatorPrefabArmLayers.Configure(rig);
+                var sprites=copy.GetComponentsInChildren<SpriteRenderer>(true);
+                var body=sprites.Where(s=>s.sprite && new[]{"body","l_leg","r_leg"}.Contains(s.sprite.name)).ToArray();
+                int min=body.Min(s=>s.sortingOrder);
+                foreach(var mask in new[]{rig.leftArmMask,rig.rightArmMask})
+                {
+                    Require(mask.backRenderer.sortingOrder<min,"Rear arm must be below body and legs.");
+                    foreach(var background in sprites.Where(s=>s!=mask.backRenderer && s!=rig.leftArmMask.backRenderer &&
+                        s!=rig.rightArmMask.backRenderer && s!=rig.leftArmMask.frontRenderer && s!=rig.rightArmMask.frontRenderer && s.sortingOrder<min))
+                        Require(mask.backRenderer.sortingOrder>background.sortingOrder,"Rear arm ties or falls below lower artwork.");
+                }
+                var orders=sprites.Select(s=>s.sortingOrder).ToArray();
+                Require(first==null || first.SequenceEqual(orders),"Repeated setup shifted rendering orders again.");
+                first=orders;
+            }
+            return "PASS: rear arms have a strict order between background and body; repeated setup is stable.";
+        }
+        finally{UnityEngine.Object.DestroyImmediate(copy);}
+    }
     public static string RunCook(string psdPath)
     {
         var selected = Selection.activeObject;

@@ -32,7 +32,7 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
     {
         if(string.IsNullOrEmpty(json))return;
         var draft=JsonUtility.FromJson<PlacementDraft>(json);var state=GetPlacement(api);
-        Cancel(state);state.points=draft.points;state.extraArms=draft.extraArms;state.extraLegs=draft.extraLegs;
+        Cancel(state);state.points=draft.points!=null && draft.points.Length>0?draft.points:null;state.extraArms=draft.extraArms;state.extraLegs=draft.extraLegs;
         state.shoulderGuide=draft.shoulderGuide;api.PreviewRenderer.SkeletronShoulderGuideOffset=draft.shoulderGuide;
     }
     private static readonly Vector2[] Template =
@@ -225,7 +225,7 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
         if (state == null)
             return;
         var points = state.control != 0 && state.armed ? BuildPoints(GetBounds(state.start, state.end)) : state.points;
-        if (points == null)
+        if (points == null || points.Length<4)
             return;
 
         Handles.BeginGUI();
@@ -246,6 +246,7 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
             {
                 if (!IsChainEnabled(chain.first, state.extraArms, state.extraLegs))
                     continue;
+                if(chain.first+chain.names.Length>=points.Length)continue;
                 Handles.color = chain.first >= 22 ? new Color(0.25f, 0.58f, 1f) : new Color(0.35f, 0.95f, 0.95f);
                 var line = new Vector3[chain.names.Length + 1];
                 for (var i = 0; i < line.Length; i++)
@@ -281,13 +282,15 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
     private static Vector2 ShoulderGuideOffset(Vector2[] points,Vector2 manual)
     {
         if(manual.sqrMagnitude>.0001f)return manual;
+        if(points==null||points.Length<5)return Vector2.zero;
         var axis=points[4]-points[3];if(axis.sqrMagnitude<.0001f)axis=Vector2.up;
         var side=new Vector2(axis.y,-axis.x).normalized;
-        return side*Mathf.Max(Vector2.Distance(points[6],points[10])*.5f,axis.magnitude);
+        float span=points.Length>10?Vector2.Distance(points[6],points[10])*.5f:0;
+        return side*Mathf.Max(span,axis.magnitude);
     }
     private static int FindShoulderGuideEnd(Placement state,PsdCoordinateSpace coordinates,Vector2 mouse)
     {
-        if(state.points==null)return -1;
+        if(state.points==null||state.points.Length<4)return -1;
         var offset=ShoulderGuideOffset(state.points,state.shoulderGuide);
         if(Vector2.Distance(coordinates.DocumentToView(state.points[3]-offset),mouse)<=10f)return -2;
         if(Vector2.Distance(coordinates.DocumentToView(state.points[3]+offset),mouse)<=10f)return -3;
@@ -308,13 +311,13 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
 
     internal static bool IsPlacementDragging(Reanimator.SystemApi api) => GetPlacement(api)?.control > 0;
 
-    internal static bool HasPlacement(Reanimator.SystemApi api) => GetPlacement(api)?.points != null;
+    internal static bool HasPlacement(Reanimator.SystemApi api) => GetPlacement(api)?.points?.Length >= 6;
 
     internal static List<(string name, int parent, Vector2 start, Vector2 end)> CapturePlacement(
         Reanimator.SystemApi api)
     {
         var state = GetPlacement(api);
-        if (state?.points == null)
+        if (state?.points == null || state.points.Length<6)
             return null;
         var size = api.PreviewRenderer.DocumentSize;
         return BuildBoneSpecs(state.points, new Rect(0f, 0f, size.x, size.y), state.extraArms, state.extraLegs);
@@ -359,6 +362,7 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
         foreach (var chain in Chains)
         {
             var end = chain.first + chain.names.Length + 1;
+            if(end>points.Length)continue;
             if (joint < chain.first || joint >= end)
                 continue;
             for (var i = joint; i < end; i++)
@@ -371,7 +375,7 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
         Vector2[] points, Rect canvas, bool extraArms = false, bool extraLegs = false)
     {
         var specs = new List<(string name, int parent, Vector2 start, Vector2 end)>();
-        if (canvas.width <= 0f || canvas.height <= 0f)
+        if (points==null || points.Length<6 || canvas.width <= 0f || canvas.height <= 0f)
             return specs;
         var rootLength = Mathf.Max(1f, Vector2.Distance(points[0], points[5]) * 0.15f);
         specs.Add(("root", -1, Vector2.zero, Vector2.right * rootLength));
@@ -380,6 +384,7 @@ internal sealed class ReanimatorSkeletronModule : ReanimatorToolModeModule, IRea
         {
             if (!IsChainEnabled(chain.first, extraArms, extraLegs))
                 continue;
+            if(chain.first+chain.names.Length>=points.Length)continue;
             var parent = chain.torsoParent == 3 ? torsoBones[2] : chain.torsoParent == 0 ? torsoBones[0] : 0;
             for (var i = 0; i < chain.names.Length; i++)
             {

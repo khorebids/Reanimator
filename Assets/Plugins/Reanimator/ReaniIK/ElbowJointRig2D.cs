@@ -13,6 +13,7 @@ public sealed class ElbowJointRig2D : MonoBehaviour
     [SerializeField] private Vector3 restPosition;
     [SerializeField] private Quaternion rotationOffset = Quaternion.identity;
     [SerializeField] private Quaternion restRotation = Quaternion.identity;
+    [SerializeField] private float restJointAngle;
     private Vector3 appliedPosition;
     private Quaternion appliedRotation;
     private bool applied;
@@ -26,6 +27,7 @@ public sealed class ElbowJointRig2D : MonoBehaviour
         maximumShift = Mathf.Max(0f, shift);
         restPosition = transform.localPosition;
         restRotation = transform.localRotation;
+        restJointAngle=joint?Mathf.DeltaAngle(0,joint.localEulerAngles.z):0;
         rotationOffset = Quaternion.Inverse(GetDirectionRotation(out _)) * restRotation;
     }
 
@@ -53,11 +55,10 @@ public sealed class ElbowJointRig2D : MonoBehaviour
             offset = shoulderDirection * (maximumShift * shoulderBend);
             return Quaternion.AngleAxis(Mathf.Atan2(shoulderDirection.y, shoulderDirection.x) * Mathf.Rad2Deg, Vector3.forward);
         }
-        var tangent = Vector2.right + outgoing.normalized;
-        if (tangent.sqrMagnitude < 1e-6f)
-            tangent = Vector2.right;
-        var direction = new Vector2(-tangent.y, tangent.x).normalized * (flip ? -1f : 1f);
-        var bend = Mathf.Clamp01(Vector2.SignedAngle(Vector2.right, outgoing) * (flip ? 1f : -1f) / 180f);
+        float jointAngle=restJointAngle+Mathf.DeltaAngle(restJointAngle,Vector2.SignedAngle(Vector2.right,outgoing));
+        float half=jointAngle*.5f*Mathf.Deg2Rad;
+        var direction = new Vector2(-Mathf.Sin(half),Mathf.Cos(half)) * (flip ? -1f : 1f);
+        var bend = Mathf.Clamp01(jointAngle * (flip ? 1f : -1f) / 180f);
         offset = direction * (maximumShift * bend);
         return Quaternion.AngleAxis(Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg, Vector3.forward);
     }

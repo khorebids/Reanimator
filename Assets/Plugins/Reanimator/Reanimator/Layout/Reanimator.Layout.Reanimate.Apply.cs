@@ -82,14 +82,15 @@ public partial class Reanimator : EditorWindow, IReanimatorAsyncProgressHost
         var shoulderError = renderer.GetShoulderDraftError();
         if (shoulderError != null) return shoulderError;
         var face = FindReanimateStepSprite(renderer.Layers, ReanimateFaceStep);
-        if (face == null || renderer.CaptureReanimateFaceDraft(face) == null)
-            return "Draw the mouth, both lips and nose on the Face step.";
-        var error = renderer.GetFaceMouthContourError();
+        var error = renderer.GetReanimateFaceDraftError(face);
         if (error != null)
             return error;
-        if (FindReanimateStepSprite(renderer.Layers, ReanimateChestStep) == null ||
-            renderer.CaptureReanimateChestDraft() == null)
+        var chestModeError=renderer.GetReanimateChestModeError();if(chestModeError!=null)return chestModeError;
+        if (renderer.ReanimateChestMode!=0 && (renderer.ReanimateChestMode==2 || renderer.HasReanimateChestContours) && ((renderer.ReanimateChestMode!=2 && FindReanimateStepSprite(renderer.Layers, ReanimateChestStep) == null) ||
+            renderer.CaptureReanimateChestDraft() == null))
             return "Draw both breast contours and place each nipple inside its contour.";
+        var assError=renderer.GetAssDraftError();
+        if(assError!=null)return assError;
         if (reanimateOtherDrafts.TryGetValue(path, out var others))
         {
             foreach (var sprite in FindReanimateOtherSprites())
@@ -149,7 +150,7 @@ public partial class Reanimator : EditorWindow, IReanimatorAsyncProgressHost
                     await System.Threading.Tasks.Task.Delay(16);
                     RequireReanimateAsset(path);
                 }
-                if (faceDraft != null && chestDraft != null)
+                if (faceDraft != null || chestDraft != null)
                     RestoreReanimateDrafts(faceDraft, chestDraft);
             }
             TickReanimateDraftCacheForRun(path);
@@ -178,6 +179,8 @@ public partial class Reanimator : EditorWindow, IReanimatorAsyncProgressHost
                 ? CaptureReanimateLimbMasks(limbDrafts)
                 : Array.Empty<Vector2[][]>();
             var others = CaptureReanimateOthers(path);
+            var assDraft=renderer.CaptureAssDraft();
+            await RebuildReanimateWorkingGeometryAsync(path);
             await automation.RunReanimateAsync(this, () =>
             {
                 RequireReanimateAsset(path);
@@ -189,7 +192,7 @@ public partial class Reanimator : EditorWindow, IReanimatorAsyncProgressHost
             }, async () =>
             {
                 RequireReanimateAsset(path);
-                var skinnedSprites = await ApplyReanimateDraftGeometryAsync(faceDraft,chestDraft,others,belly,limbs);
+                var skinnedSprites = await ApplyReanimateDraftGeometryAsync(faceDraft,chestDraft,others,belly,limbs,assDraft);
                 await RunReanimateStageAsync("Apply PSD",.90f,()=>{ApplyBeforeCookPrefab(path);return "Complete";});
                 RestoreReanimateDrafts(faceDraft, chestDraft);
                 await RunReanimateStageAsync("Build prefab",.96f,()=>{
@@ -216,7 +219,7 @@ public partial class Reanimator : EditorWindow, IReanimatorAsyncProgressHost
             FinishReanimateChallenge(path, EditorApplication.timeSinceStartup, false);
             reanimateResult = ex.Message;
             reanimateResultError = true;
-            if (faceDraft != null && chestDraft != null && string.Equals(path, activeAssetPath, StringComparison.OrdinalIgnoreCase))
+            if ((faceDraft != null || chestDraft != null) && string.Equals(path, activeAssetPath, StringComparison.OrdinalIgnoreCase))
                 RestoreReanimateDrafts(faceDraft, chestDraft);
         }
         finally
@@ -238,10 +241,26 @@ public partial class Reanimator : EditorWindow, IReanimatorAsyncProgressHost
             throw new InvalidOperationException("The selected PSD changed during Reanimate.");
     }
 
+    internal System.Threading.Tasks.Task<string> RebuildReanimateWorkingGeometryAsync(string path)
+    {
+        return RunReanimateStageAsync("Rebuild working geometry",.02f,()=>
+        {
+            int count=layerPreviewRenderer.GenerateDefaultGeometryForAllSprites(path,out var error);
+            if(count<=0)throw new InvalidOperationException(error??"Could not rebuild working sprite geometry.");
+            return $"Rebuilt {count} sprite meshes";
+        });
+    }
+
     private async System.Threading.Tasks.Task<List<string>> ApplyReanimateDraftGeometryAsync(Vector2[][] faceDraft,
-        PsdLayerPreviewRenderer.ReanimateChestDraft chestDraft,List<OtherSpriteOperation> others,Vector2[] belly,Vector2[][][] limbs)
+        PsdLayerPreviewRenderer.ReanimateChestDraft chestDraft,List<OtherSpriteOperation> others,Vector2[] belly,Vector2[][][] limbs,
+        PsdLayerPreviewRenderer.AssDraft assDraft=null)
     {
         var sprites=await ApplyReanimateFaceAndChestAsync(faceDraft,chestDraft);
+        layerPreviewRenderer.RestoreAssDraft(assDraft);
+        if(assDraft!=null)await RunReanimateStageAsync("Ass",.71f,()=>{
+            if(!layerPreviewRenderer.ApplyAss(out var name,out var error))throw new InvalidOperationException("Ass: "+error);
+            if(!sprites.Contains(name))sprites.Add(name);return "Complete";
+        });
         await ApplyReanimateOthersAsync(others,sprites,chestDraft,belly);
         await ApplyReanimateSoftContoursAsync(limbs,sprites);
         IReadOnlyList<string> sideAss=null;
@@ -257,7 +276,7 @@ public partial class Reanimator : EditorWindow, IReanimatorAsyncProgressHost
         var chest = FindReanimateStepSprite(renderer.Layers, ReanimateChestStep);
         if (face != null)
             renderer.RestoreReanimateFaceDraft(face, faceDraft);
-        if (chest != null)
+        if (chest != null || chestDraft?.Mode==2)
             renderer.RestoreReanimateChestDraft(chest, chestDraft);
     }
 
@@ -267,22 +286,32 @@ public partial class Reanimator : EditorWindow, IReanimatorAsyncProgressHost
         var renderer = layerPreviewRenderer;
         var face = FindReanimateStepSprite(renderer.Layers, ReanimateFaceStep);
         var chest = FindReanimateStepSprite(renderer.Layers, ReanimateChestStep);
-        if (face == null || chest == null)
+        if ((faceDraft!=null && face == null) || (chestDraft!=null && chestDraft.Mode!=2 && chest == null))
             throw new InvalidOperationException("Face or body sprite is missing after ALLIN.");
-        var skinnedSprites = new List<string> { face.name, chest.name };
+        var skinnedSprites = new List<string>();
+        if(face!=null)skinnedSprites.Add(face.name);
+        if(chest!=null)skinnedSprites.Add(chest.name);
         RestoreReanimateDrafts(faceDraft, chestDraft);
         var previous = renderer.TryGetSelectedLayer(out var layer) ? layer : null;
         try
         {
-            await RunReanimateStageAsync("Face",.65f,()=>{
+            if(faceDraft!=null)await RunReanimateStageAsync("Face",.65f,()=>{
                 renderer.SelectLayer(face);
                 if (!renderer.TryApplyFaceMouth(lowerLipMaxHeadWeight, upperLipMaxHeadWeight, out var error))
                     throw new InvalidOperationException("Face: " + error);
                 return "Complete";
             });
-            await RunReanimateStageAsync("Chest",.69f,()=>{
+            else if(face!=null)await RunReanimateStageAsync("Face: Head binding",.65f,()=>{
+                if(!renderer.TryBindReanimateFaceToHead(face,out var error))
+                    throw new InvalidOperationException("Face: "+error);
+                return "Complete";
+            });
+            if(chestDraft!=null)await RunReanimateStageAsync("Chest",.69f,()=>{
                 if (!renderer.TryApplyReanimateChest(chest, out var error))
                     throw new InvalidOperationException("Chest: " + error);
+                if(chestDraft.Mode==2)
+                    for(int side=0;side<2;side++)
+                    {var name=renderer.FindSeparatedChestSprite(side).name;if(!skinnedSprites.Contains(name))skinnedSprites.Add(name);}
                 return "Complete";
             });
         }

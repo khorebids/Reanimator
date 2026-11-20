@@ -19,6 +19,7 @@ public partial class PsdLayerPreviewRenderer
         PsdCoordinateSpace coordinates,
         IReadOnlyList<LayerInfo> drawList)
     {
+        if(BoobToolVersion==3){HandleAssInput(localRect,coordinates);return;}
         if (BoobToolVersion == 2)
         {
             HandleSideAssInput(localRect, coordinates);

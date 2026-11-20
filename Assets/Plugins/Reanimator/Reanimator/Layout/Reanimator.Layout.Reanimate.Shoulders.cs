@@ -33,6 +33,12 @@ public partial class Reanimator
         {
             EditorGUILayout.HelpBox("This arm sprite is absent.", MessageType.Info); return null;
         }
+        if(!ReanimatorSkeletronModule.HasPlacement(Api))
+        {
+            CancelReanimateShoulderStroke();reanimateShoulderDrawing=false;
+            EditorGUILayout.HelpBox("Place the skeleton on the Full PSD step before drawing shoulders.",MessageType.Info);
+            return layer;
+        }
         var contour = layerPreviewRenderer.GetShoulderContour(ReanimateShoulderBone);
         if (!ReferenceEquals(layer, reanimateShoulderLayer))
         { reanimateShoulderLayer = layer; reanimateShoulderDrawing = contour.Length < 3; }
@@ -48,6 +54,7 @@ public partial class Reanimator
     }
     private void DrawOrHandleReanimateShoulderCanvas(Rect viewport, PsdCoordinateSpace coordinates)
     {
+        if(!ReanimatorSkeletronModule.HasPlacement(Api))return;
         var input = Event.current;
         if (input.type == EventType.Repaint)
         {

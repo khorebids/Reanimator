@@ -263,9 +263,7 @@ public partial class PsdLayerPreviewRenderer
         {
             for (int i = 0; i < staged.vertices.Length; i++)
                 if ((staged.vertices[i] - point).sqrMagnitude <= 0.0001f) return i;
-            int index = staged.vertices.Length;
-            return InsertAppliedVertexIntoLayerData(staged, point, true, optimizeQuality: false) &&
-                System.Array.IndexOf(staged.triangles, index) >= 0 ? index : -1;
+            return TryInsertElbowVertexExact(staged,point,out var index)?index:-1;
         }
     }
 

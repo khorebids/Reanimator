@@ -5,6 +5,65 @@ using UnityEngine;
 
 public static class ReaniIKLegChecks
 {
+    public static string VerifyPrefabAuthoredPose(string path)
+    {
+        var scene=UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();GameObject root=null;
+        try
+        {
+            root=(GameObject)UnityEditor.PrefabUtility.InstantiatePrefab(UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(path),scene);
+            root.SetActive(false);var rig=root.GetComponent<ReaniIK>();int count=0;
+            rig.SynchronizeAnimationControls();
+            foreach(var limb in new[]{rig.leftArm,rig.rightArm,rig.leftArm2,rig.rightArm2,rig.leftLeg,rig.rightLeg})
+            {
+                if(!limb.IsValid || !limb.lower)continue;
+                var knee=limb.lower.position;var tip=limb.tip.position;
+                for(int pass=0;pass<3;pass++)
+                {
+                    limb.Solve(1);
+                    Require(Vector3.Distance(limb.lower.position,knee)<.001f && Vector3.Distance(limb.tip.position,tip)<.001f,
+                        "First IK evaluation reversed authored bend: "+limb.upper.name);
+                }
+                count++;
+            }
+            return "PASS: "+count+" prefab limbs retain authored joints/targets across three initial IK evaluations after save/reload.";
+        }
+        finally{if(root)UnityEngine.Object.DestroyImmediate(root);UnityEditor.SceneManagement.EditorSceneManager.ClosePreviewScene(scene);}
+    }
+    public static string VerifyAuthoredBends()
+    {
+        int cases=0;
+        foreach(float bend in new[]{-150f,-126f,-30f,30f,126f,150f})
+        foreach(string side in new[]{"l","r"})
+        {
+            var root=new GameObject("Bent leg fixture");root.SetActive(false);
+            try
+            {
+                var upper=Bone(root.transform,side+"_leg",Vector3.zero);
+                upper.localRotation=Quaternion.Euler(0,0,42);
+                var lower=Bone(upper,side+"_leg_1",Vector3.right*2);
+                lower.localRotation=Quaternion.Euler(0,0,bend);
+                var tip=Bone(lower,side+"_foot",Vector3.right*2.3f);
+                var rig=root.AddComponent<ReaniIK>();
+                var controls=Bone(root.transform,"rigs",Vector3.zero);
+                var bones=new[]{upper,lower,tip};
+                Vector3 knee=lower.position,foot=tip.position;
+                ReaniIKLegSetup.Configure(rig,bones,controls);
+                var limb=side=="l"?rig.leftLeg:rig.rightLeg;
+                for(int pass=0;pass<3;pass++)
+                {
+                    limb.Solve(1);
+                    Require(Vector3.Distance(lower.position,knee)<.001f && Vector3.Distance(tip.position,foot)<.001f,
+                        "IK changed authored bend on initial/repeated evaluation: "+side+" "+bend);
+                }
+                bool flip=limb.flip;limb.flip=!flip;
+                ReaniIKLegSetup.Configure(rig,bones,controls);
+                Require(limb.flip==!flip,"Repeated setup erased manual Flip.");
+                cases++;
+            }
+            finally{UnityEngine.Object.DestroyImmediate(root);}
+        }
+        return "PASS: "+cases+" authored bent legs retain knee/foot positions on first and repeated solves; manual Flip survives setup.";
+    }
     public static string Run()
     {
         int cases = 0;

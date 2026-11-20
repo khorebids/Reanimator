@@ -147,7 +147,9 @@ public partial class PsdLayerPreviewRenderer
         try
         {
             // Keep the existing skinning as the baseline outside the projected regions.
-            return GenerateAutoGeometryForSelected(cachedPath, 90, 250, 90, false,
+            // Project the visible fabric, including translucent pixels. An opaque-only
+            // outline can be empty (or silently discard most of a sheer garment).
+            return GenerateAutoGeometryForSelected(cachedPath, 90, 10, 90, false,
                 ReanimatorAutoGeometryMode.Default, ReanimatorReanimaxGeometryMode.Hard,
                 5d, 0f, 0.5f, 3, 13f, 4, 2.8f, 30, 5f, 5, out error);
         }
@@ -384,7 +386,7 @@ public partial class PsdLayerPreviewRenderer
                 return;
         if (TryFindContainingTriangle(data.triangles, data.vertices, point,
                 out _, out _, out _, out _, out _, out _, out _, out _))
-            InsertAppliedVertexIntoLayerData(data, point, true, allowBoundarySnap: !exactBoundary, optimizeQuality: false);
+            TryInsertElbowVertexExact(data,point,out _);
     }
 
     private void CommitOtherRegion(LayerInfo layer, LayerVertexData data, LayerVertexData staged)

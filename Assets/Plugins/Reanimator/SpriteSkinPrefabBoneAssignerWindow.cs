@@ -2092,6 +2092,7 @@ internal static class ReanimatorPrefabCooker
             FindCreatedBone(createdBones, "nipple_l") ?? FindCreatedBone(createdBones, "l_nipple"),
             FindCreatedBone(createdBones, "nipple_r") ?? FindCreatedBone(createdBones, "r_nipple"));
         rig.softContour.bones = createdBones.Where(ReaniIK.IsSoftContourBone).ToArray();
+        rig.ass.bones = ExistingBones(FindCreatedBone(createdBones,"l_ass"),FindCreatedBone(createdBones,"r_ass"));
         rig.springRotation.bones = createdBones.Where(ReaniIK.IsSpringRotationBone).ToArray();
         rig.frontHair.bones = ExistingBones(FindCreatedBone(createdBones, "front_hair"));
         rig.backHair.bones = ExistingBones(FindCreatedBone(createdBones, "back_hair"));

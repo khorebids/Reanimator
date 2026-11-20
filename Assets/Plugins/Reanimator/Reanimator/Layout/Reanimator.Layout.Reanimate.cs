@@ -145,23 +145,26 @@ public partial class Reanimator : EditorWindow
                 var drawShoulders = ready && reanimateStep == ReanimateShouldersStep;
                 var focus = drawShoulders ? DrawReanimateShouldersSettings() : drawOthers ? DrawReanimateOthersSettings(path) :
                     ready ? FindReanimateStepSprite(layerPreviewRenderer.Layers, reanimateStep) : null;
+                if(ready && reanimateStep==ReanimateChestStep && focus==null && layerPreviewRenderer.ReanimateChestMode==2)
+                    focus=layerPreviewRenderer.FindSeparatedChestSprite(0);
                 if (ready && reanimateStep > 0 && reanimateStep < ReanimateOthersStep && focus == null)
                     EditorGUILayout.HelpBox($"No sprite found for {ReanimateStepNames[reanimateStep]}.", MessageType.Info);
                 var drawFace = reanimateStep == ReanimateFaceStep && focus != null;
                 var drawSkeleton = ready && reanimateStep == 0;
-                var drawChest = reanimateStep == ReanimateChestStep && focus != null;
+                var drawChest = ready && reanimateStep == ReanimateChestStep;
                 var drawLimb = reanimateStep >= FirstReanimateLimbStep && reanimateStep < ReanimateOthersStep && focus != null;
                 if (drawFace)
                 {
                     DrawReanimateFaceSteps(focus);
                 }
-                var bellyLayer = drawChest ? focus : null;
+                var bellyLayer = drawChest ? FindReanimateStepSprite(layerPreviewRenderer.Layers,ReanimateChestStep) : null;
                 if (drawSkeleton)
                     reanimateSkeletron.DrawPlacementSettings(Api, false);
                 if (drawChest)
                 {
                     DrawReanimateChestSteps(focus);
                     DrawReanimateBellySettings(bellyLayer);
+                    DrawReanimateAssSettings();
                 }
                 var drawBelly = bellyLayer != null && layerPreviewRenderer.IsDrawingSoftContourBelly;
                 if (drawLimb)
@@ -196,12 +199,14 @@ public partial class Reanimator : EditorWindow
                                           (drawBelly && layerPreviewRenderer.IsSoftContourBellyStrokeActive) ||
                                           (drawOthers && reanimateOtherStrokeControl != 0);
                         pauseCamera |= drawShoulders && reanimateShoulderControl != 0;
+                        pauseCamera |= drawChest && layerPreviewRenderer.IsAssStrokeActive;
                         var diagnosing = reanimateDiagnosticLayer != null;
                         if (layerPreviewRenderer.DrawReanimateCanvas(path, viewport, reanimateNavigator,
                                 reanimateDiagnosticLayer ?? focus, !diagnosing && pauseCamera,
                                 !diagnosing && (drawChest || drawLimb), out var coordinates,
                                 drawSkeleton && !diagnosing ? ReanimatorSkeletronModule.GetHiddenLayers(Api) : null,
-                                drawBelly && !diagnosing ? bellyLayer : null, diagnosing || drawOthers || drawShoulders))
+                                drawBelly && !diagnosing ? bellyLayer : null, diagnosing || drawOthers || drawShoulders,
+                                drawChest && !diagnosing?layerPreviewRenderer.GetSeparatedChestPreviewLayers():null))
                             Repaint();
                         if (diagnosing)
                             return;
@@ -228,7 +233,7 @@ public partial class Reanimator : EditorWindow
                         if (drawFace && coordinates != null)
                             DrawOrHandleReanimateFaceCanvas(viewport, coordinates, focus, eventType);
                         if (drawChest && coordinates != null && eventType == EventType.Repaint)
-                            layerPreviewRenderer.DrawReanimateChestContours(coordinates);
+                            DrawOrHandleReanimateChestCanvas(viewport,coordinates,focus,eventType);
                         if (drawChest && !drawBelly && coordinates != null && eventType != EventType.Repaint)
                             DrawOrHandleReanimateChestCanvas(viewport, coordinates, focus, eventType);
                         if (drawLimb && coordinates != null)
@@ -250,6 +255,10 @@ public partial class Reanimator : EditorWindow
     private void DrawReanimateBellySettings(PsdLayerPreviewRenderer.LayerInfo body)
     {
         var renderer = layerPreviewRenderer;
+        if(GUILayout.Button("No Belly"))
+        {
+            renderer.DisableReanimateBelly();Repaint();
+        }
         using (new EditorGUI.DisabledScope(body == null || !ReanimatorSkeletronModule.HasPlacement(Api)))
         {
             var drawing = renderer.IsDrawingSoftContourBelly;
@@ -257,6 +266,7 @@ public partial class Reanimator : EditorWindow
             if (!GUILayout.Button(label))
                 return;
             renderer.CancelBoobV2Interaction();
+            reanimateEditingAss=false;renderer.CancelAssStroke();
             renderer.CancelSoftContourBellyStroke();
             renderer.IsDrawingSoftContourBelly = !drawing;
             Repaint();
@@ -340,6 +350,8 @@ public partial class Reanimator : EditorWindow
         step = Mathf.Clamp(step, 0, ReanimateStepNames.Length - 1);
         if (step == reanimateStep)
             return;
+        if(step==ReanimateShouldersStep && !ReanimatorSkeletronModule.HasPlacement(Api))
+            ShowNotification(new GUIContent("Place the skeleton on the Full PSD step first."));
         reanimateDiagnosticLayer = null;
         if (reanimateStep == ReanimateShouldersStep) CancelReanimateShoulderStroke();
         if (step == ReanimateShouldersStep) SetReanimateShoulderSide(reanimateStep == ReanimateFaceStep ? 1 : 0);
@@ -351,7 +363,10 @@ public partial class Reanimator : EditorWindow
         if (reanimateStep == ReanimateFaceStep)
             LeaveReanimateFaceStep();
         if (reanimateStep == ReanimateChestStep)
+        {
+            layerPreviewRenderer?.CancelAssStroke();reanimateEditingAss=false;
             LeaveReanimateChestStep();
+        }
         if (reanimateStep >= FirstReanimateLimbStep && reanimateStep < ReanimateOthersStep)
             LeaveReanimateLimbStep();
         if (reanimateStep == ReanimateOthersStep)
@@ -381,11 +396,23 @@ public partial class Reanimator : EditorWindow
         }
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Chest Contours & Nipples", EditorStyles.boldLabel);
+        var mode=GUILayout.Toolbar(layerPreviewRenderer.ReanimateChestMode,new[]{"Нет груди","Тело","Отделена"});
+        if(mode!=layerPreviewRenderer.ReanimateChestMode)
+        {
+            layerPreviewRenderer.SetReanimateChestMode(mode);
+            reanimateChestItem=-1;if(mode!=0)BeginNextReanimateChestItem();Repaint();
+        }
+        var modeError=layerPreviewRenderer.GetReanimateChestModeError();
+        if(modeError!=null){EditorGUILayout.HelpBox(modeError,MessageType.Error);return;}
+        if(layerPreviewRenderer.ReanimateChestMode==0)return;
+        if(layerPreviewRenderer.ReanimateChestMode==2)
+            EditorGUILayout.LabelField("l_boob  /  r_boob",EditorStyles.miniBoldLabel);
         foreach (var item in ReanimateChestItems)
         {
             var active = reanimateChestItem == item;
             var assigned = layerPreviewRenderer.IsBoobV2ItemAssigned(item);
             var label = ReanimateChestLabels[item];
+            if(layerPreviewRenderer.ReanimateChestMode==2)label+=" ("+(item==0||item==2?"l_boob":"r_boob")+")";
             if (active)
                 label = (item < 2 ? "Placing " : "Drawing ") + label;
             else if (assigned)
@@ -393,6 +420,7 @@ public partial class Reanimator : EditorWindow
             if (GUILayout.Toggle(active, label, EditorStyles.miniButton) && !active)
             {
                 layerPreviewRenderer.CancelSoftContourBellyStroke();
+                reanimateEditingAss=false;layerPreviewRenderer.CancelAssStroke();
                 layerPreviewRenderer.CancelBoobV2Interaction();
                 reanimateChestItem = item;
                 Repaint();
@@ -403,6 +431,7 @@ public partial class Reanimator : EditorWindow
     private void BeginNextReanimateChestItem()
     {
         reanimateChestItem = -1;
+        if(layerPreviewRenderer.ReanimateChestMode==0)return;
         foreach (var item in ReanimateChestItems)
         {
             if (layerPreviewRenderer.IsBoobV2ItemAssigned(item))
@@ -415,15 +444,28 @@ public partial class Reanimator : EditorWindow
     private void DrawOrHandleReanimateChestCanvas(Rect viewport, PsdCoordinateSpace coordinates,
         PsdLayerPreviewRenderer.LayerInfo layer, EventType eventType)
     {
+        if(reanimateEditingAss)
+        {
+            if(eventType==EventType.Repaint)layerPreviewRenderer.DrawAssPreview(coordinates.DocumentToView);
+            else if(layerPreviewRenderer.HandleAssInput(viewport,coordinates,layer))Repaint();
+            return;
+        }
+        if(layerPreviewRenderer.ReanimateChestMode==0 || layerPreviewRenderer.GetReanimateChestModeError()!=null)
+        {
+            if(eventType==EventType.Repaint)layerPreviewRenderer.DrawAssPreview(coordinates.DocumentToView);
+            return;
+        }
         if (eventType == EventType.Repaint)
         {
             layerPreviewRenderer.DrawReanimateChestContours(coordinates);
+            layerPreviewRenderer.DrawAssPreview(coordinates.DocumentToView);
             return;
         }
         if (reanimateChestItem < 0)
             return;
         layerPreviewRenderer.BoobV2Selection = reanimateChestItem;
-        if (!layerPreviewRenderer.HandleReanimateChestInput(viewport, coordinates, layer))
+        var target=layerPreviewRenderer.ResolveReanimateChestInputLayer(layer,reanimateChestItem);
+        if (target==null || !layerPreviewRenderer.HandleReanimateChestInput(viewport, coordinates, target))
             return;
         if (eventType == EventType.MouseUp)
         {
@@ -452,6 +494,7 @@ public partial class Reanimator : EditorWindow
         }
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Face Contours", EditorStyles.boldLabel);
+        if(GUILayout.Button("No Mouth")){layerPreviewRenderer.DisableReanimateMouth();Repaint();}
         var labels = PsdLayerPreviewRenderer.FaceMouthContourLabels;
         for (var i = 0; i < labels.Length; i++)
         {
@@ -534,11 +577,14 @@ public partial class Reanimator : EditorWindow
         layerPreviewRenderer ??= new PsdLayerPreviewRenderer();
         layerPreviewRenderer.ClearFaceMouthContours();
         layerPreviewRenderer.ClearBoobV2();
+        layerPreviewRenderer.SetReanimateChestMode(1);
+        layerPreviewRenderer.ClearAss(false);reanimateEditingAss=false;
         layerPreviewRenderer.ClearSoftContourBellyContour();
         ReanimatorSkeletronModule.ClearPlacement(layerPreviewRenderer);
         reanimateLimbDrafts.Remove(path);
         reanimateOtherDrafts.Remove(path);
         reanimateOtherBoobs.Remove(path);
+        reanimateOtherAss.Remove(path);
         reanimateOtherBelly.Remove(path);
         reanimateOtherShoulders.Remove(path);
         layerPreviewRenderer.RefreshPreviewCache(path);

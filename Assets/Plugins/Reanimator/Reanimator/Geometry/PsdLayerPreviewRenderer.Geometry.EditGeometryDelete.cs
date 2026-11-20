@@ -477,6 +477,7 @@ public partial class PsdLayerPreviewRenderer
         }
 
         var boundaryLoop = default(List<int>);
+        var boundaryLoops=BuildAllBoundaryLoops(data.boundaryEdgePairs,vertexCount);
         if (!TryBuildBoundaryLoopFromPairs(data.boundaryEdgePairs, vertexCount, out boundaryLoop))
         {
             var contourMask = BuildContourVertexMask(data.boundaryEdgePairs, vertexCount);
@@ -516,7 +517,17 @@ public partial class PsdLayerPreviewRenderer
         data.triangles = RemapTrianglesAfterCull(data.triangles, removeMask, remap, data.vertices.Length);
 
         var newBoundaryLoop = BuildFilteredBoundaryLoop(boundaryLoop, removeMask, remap);
-        if (newBoundaryLoop.Count >= 3)
+        if(boundaryLoops.Count>1)
+        {
+            var pairs=new List<int>();
+            foreach(var component in boundaryLoops)
+            {
+                var kept=BuildFilteredBoundaryLoop(component,removeMask,remap);
+                if(kept.Count>=3)pairs.AddRange(BuildBoundaryPairsFromLoop(kept));
+            }
+            data.boundaryEdgePairs=pairs.ToArray();
+        }
+        else if (newBoundaryLoop.Count >= 3)
             data.boundaryEdgePairs = BuildBoundaryPairsFromLoop(newBoundaryLoop);
         else
             BuildEdgePairs(data.triangles, data.vertices.Length, out _, out data.boundaryEdgePairs);

@@ -192,6 +192,7 @@ public partial class PsdLayerPreviewRenderer
     private static bool TryGetVGenCenter(IReadOnlyList<Vector2> contour, out Vector2 center)
     {
         center = Vector2.zero;
+        if(contour==null || contour.Count<3)return false;
         var origin = contour[0];
         var moment = Vector2.zero;
         var area = 0f;

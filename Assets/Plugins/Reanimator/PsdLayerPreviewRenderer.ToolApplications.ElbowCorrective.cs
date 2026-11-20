@@ -91,9 +91,9 @@ public partial class PsdLayerPreviewRenderer
         var incoming = (Vector2)(parent.worldRotation * Vector3.right);
         var outgoing = (Vector2)(child.worldRotation * Vector3.right);
         var joint = GetBoneBasePoint(child);
-        if (!TryGetLimbCrossSection(vertices, data.triangles, data.boundaryEdgePairs, joint,
-                incoming, outgoing, out var a, out var b) ||
-            !TryBuildBoundaryLoopFromPairs(data.boundaryEdgePairs, vertices.Length, out var loop))
+        if (!TryGetCorrectiveElbowCrossSection(vertices, data.triangles, data.boundaryEdgePairs, joint,
+                incoming, outgoing,Mathf.Min(parent.length,child.length)*.1f,out var a,out var b) ||
+            !TryBuildBoundaryLoopNearPoint(data.boundaryEdgePairs,vertices,joint,out var loop))
         {
             message = "Could not find both contour intersections at the joint.";
             return false;
@@ -143,6 +143,42 @@ public partial class PsdLayerPreviewRenderer
         plan = result;
         message = null;
         return true;
+    }
+
+    internal static bool TryGetCorrectiveElbowCrossSection(Vector2[] vertices,int[] triangles,int[] boundary,
+        Vector2 joint,Vector2 incoming,Vector2 outgoing,float maximumOffset,out Vector2 a,out Vector2 b)
+    {
+        a=b=default;
+        if(TryAt(joint,out a,out b))return true;
+        // A hand-placed pivot can sit just outside a sharp elbow silhouette.
+        // Keep that pivot and sample a nearby interior section of the same mesh.
+        float best=float.PositiveInfinity;Vector2 origin=default;
+        for(int i=0;i+2<triangles.Length;i+=3)
+        {
+            var x=vertices[triangles[i]];var y=vertices[triangles[i+1]];var z=vertices[triangles[i+2]];
+            var closest=ClosestPointOnTriangle(joint,x,y,z);float distance=(closest-joint).sqrMagnitude;
+            if(distance>=best)continue;
+            best=distance;origin=Vector2.Lerp(closest,(x+y+z)/3f,.15f);
+        }
+        return best<=maximumOffset*maximumOffset&&TryAt(origin,out a,out b);
+
+        bool TryAt(Vector2 point,out Vector2 start,out Vector2 end)
+        {
+            Vector2 first=default,last=default;float width=float.PositiveInfinity;
+            Sample(incoming,outgoing);
+            // On a strongly folded arm the bisector section can run along the
+            // upper arm all the way to the shoulder. Prefer a local section
+            // normal to either anatomical segment when it is shorter.
+            if(Vector2.Angle(incoming,outgoing)>60f){Sample(incoming,incoming);Sample(outgoing,outgoing);}
+            start=first;end=last;return !float.IsPositiveInfinity(width);
+            void Sample(Vector2 before,Vector2 after)
+            {
+                if(!TryGetLimbCrossSection(vertices,triangles,boundary,point,before,after,out var x,out var y))return;
+                float candidate=Vector2.Distance(x,y);
+                if(candidate<Mathf.Max(.01f,maximumOffset*.1f)||candidate>=width)return;
+                width=candidate;first=x;last=y;
+            }
+        }
     }
 
     internal static bool TrySampleElbowContour(Vector2[] vertices, IReadOnlyList<int> loop, Vector2 start,

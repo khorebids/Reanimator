@@ -2262,6 +2262,7 @@ public partial class PsdLayerPreviewRenderer
                     retainedTopologyTriangles[i + 1], retainedTopologyTriangles[i + 2])) &&
                     !FullBoobRetainedTriangleCovered(data, retainedTopologyTriangles[i], retainedTopologyTriangles[i+1], retainedTopologyTriangles[i+2]))
                     return false;
+            if(!TryNormalizeSideAssTriangles(data))return false;
             BuildEdgePairs(data.triangles, data.vertices.Length, out data.allEdgePairs, out data.boundaryEdgePairs);
             return SideAssJoinIsClosed(data, exterior);
 
@@ -2701,6 +2702,7 @@ public partial class PsdLayerPreviewRenderer
         ICollection<int> localTriangles)
     {
         var count = contour.Count;
+        if(count<3)return;
         var outerIndices = new int[count];
         for (var i = 0; i < count; i++)
         {

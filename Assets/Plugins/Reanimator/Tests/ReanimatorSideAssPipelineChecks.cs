@@ -54,6 +54,7 @@ public partial class Reanimator
         if(!ReanimatorExternalPanelRegistry.TryGet("Comfimator",out var panel)||panel is not IReanimatorReanimatePanel automation)throw new Exception("Comfimator missing.");
         var face=renderer.CaptureReanimateFaceDraft(FindReanimateStepSprite(renderer.Layers,ReanimateFaceStep));
         var chest=renderer.CaptureReanimateChestDraft();var belly=renderer.CaptureSoftContourBellyDraft();
+        var ass=renderer.CaptureAssDraft();
         var skeleton=ReanimatorSkeletronModule.CapturePlacement(Api);
         var limbs=reanimateLimbDrafts.TryGetValue(path,out var drafts)?CaptureReanimateLimbMasks(drafts):Array.Empty<Vector2[][]>();
         var others=CaptureReanimateOthers(path);var rollback=renderer.CaptureSideAssPipelineRollback();
@@ -64,11 +65,12 @@ public partial class Reanimator
             for(int repeat=0;repeat<2;repeat++)
             {
                 reanimateProgress=0;reanimateDisplayedProgress=0;
+                await RebuildReanimateWorkingGeometryAsync(path);
                 await automation.RunReanimateAsync(this,()=>{
                     if(!renderer.TryApplySkeletron(skeleton,out var error,includeHeadControls:true))throw new Exception(error);
                     return "Skeleton applied";
                 },async()=>{
-                    await ApplyReanimateDraftGeometryAsync(face,chest,others,belly,limbs);
+                    await ApplyReanimateDraftGeometryAsync(face,chest,others,belly,limbs,ass);
                     renderer.ValidateAppliedSideAssTopology();return "Geometry verified";
                 },belly.Length>=3?new Func<string>(()=>renderer.ApplyReanimateBelly(FindReanimateStepSprite(renderer.Layers,ReanimateChestStep),belly)):null);
             }

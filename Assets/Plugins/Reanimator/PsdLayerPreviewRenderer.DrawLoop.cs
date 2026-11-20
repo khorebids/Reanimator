@@ -397,7 +397,7 @@ public partial class PsdLayerPreviewRenderer
 
     internal bool DrawReanimateCanvas(string assetPath, Rect viewport, PreviewNavigator navigator, LayerInfo focus,
         bool pauseCamera, bool hideOccluders, out PsdCoordinateSpace coordinates, ISet<LayerInfo> hiddenLayers = null,
-        LayerInfo occlusionTarget = null, bool onlyFocus = false)
+        LayerInfo occlusionTarget = null, bool onlyFocus = false,ISet<LayerInfo> extraVisibleLayers=null)
     {
         coordinates = null;
         var repaint = Event.current.type == EventType.Repaint;
@@ -415,6 +415,23 @@ public partial class PsdLayerPreviewRenderer
         {
             var baseCoordinates = new PsdCoordinateSpace(viewport, documentSize, layerInfos, null);
             var bounds = focus == null ? baseCoordinates.CanvasRectView : baseCoordinates.LayerToViewRect(focus);
+            if (focus != null && TryGetReanimateFocusLocalBounds(focus, out var visibleBounds))
+            {
+                var min = baseCoordinates.DocumentToView(PsdCoordinateSpace.LayerLocalToDocumentPoint(focus, visibleBounds.min));
+                var max = baseCoordinates.DocumentToView(PsdCoordinateSpace.LayerLocalToDocumentPoint(focus, visibleBounds.max));
+                bounds = Rect.MinMaxRect(Mathf.Min(min.x,max.x),Mathf.Min(min.y,max.y),Mathf.Max(min.x,max.x),Mathf.Max(min.y,max.y));
+            }
+            if(extraVisibleLayers!=null)foreach(var extra in extraVisibleLayers)
+            {
+                var rect=baseCoordinates.LayerToViewRect(extra);
+                if(TryGetReanimateFocusLocalBounds(extra,out var local))
+                {
+                    var a=baseCoordinates.DocumentToView(PsdCoordinateSpace.LayerLocalToDocumentPoint(extra,local.min));
+                    var b=baseCoordinates.DocumentToView(PsdCoordinateSpace.LayerLocalToDocumentPoint(extra,local.max));
+                    rect=Rect.MinMaxRect(Mathf.Min(a.x,b.x),Mathf.Min(a.y,b.y),Mathf.Max(a.x,b.x),Mathf.Max(a.y,b.y));
+                }
+                bounds=Rect.MinMaxRect(Mathf.Min(bounds.xMin,rect.xMin),Mathf.Min(bounds.yMin,rect.yMin),Mathf.Max(bounds.xMax,rect.xMax),Mathf.Max(bounds.yMax,rect.yMax));
+            }
             if (bounds.width > 0f && bounds.height > 0f)
                 moving = navigator.AnimateFrameBounds(viewport, bounds, focus == null ? 0.98f : 0.86f,
                     EditorApplication.timeSinceStartup, pauseCamera);
@@ -430,12 +447,13 @@ public partial class PsdLayerPreviewRenderer
         var aboveFocus = false;
         foreach (var layer in drawList)
         {
-            if (layer == null || !layer.visible || hiddenLayers?.Contains(layer) == true ||
-                (onlyFocus && !ReferenceEquals(layer, focus)))
+            bool extra=layer!=null && extraVisibleLayers?.Contains(layer)==true;
+            if (layer == null || (!layer.visible && !extra) || (hiddenLayers?.Contains(layer) == true && !extra) ||
+                (onlyFocus && !ReferenceEquals(layer, focus) && !extra))
                 continue;
             var texture = layer.texture != null ? layer.texture : atlas;
             var rect = coordinates.LayerToViewRect(layer);
-            if (aboveFocus && focusRect.Overlaps(rect))
+            if (aboveFocus && focusRect.Overlaps(rect) && !extra)
                 continue;
             if (ReferenceEquals(layer, occluded))
                 aboveFocus = true;

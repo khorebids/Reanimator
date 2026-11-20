@@ -396,7 +396,7 @@ public partial class Reanimator : EditorWindow
 
                 var version = GUILayout.Toolbar(
                     layerPreviewRenderer.BoobToolVersion,
-                    new[] { "Single", "Full body", "Side Ass" });
+                    new[] { "Single", "Full body", "Side Ass", "Ass" });
                 layerPreviewRenderer.BoobToolVersion = version;
                 GUILayout.Space(4f);
 
@@ -404,6 +404,8 @@ public partial class Reanimator : EditorWindow
                     DrawBoobV1Panel();
                 else if (layerPreviewRenderer.BoobToolVersion == 1)
                     DrawBoobV2Panel();
+                else if(layerPreviewRenderer.BoobToolVersion==3)
+                    DrawAssSettings(true);
                 else
                     DrawSideAssPanel();
             }

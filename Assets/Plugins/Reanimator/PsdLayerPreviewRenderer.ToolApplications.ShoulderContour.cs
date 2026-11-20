@@ -101,10 +101,11 @@ public partial class PsdLayerPreviewRenderer
         plan = null; error = "Select the arm sprite and upper arm bone, then draw the weld outline.";
         if (!TryGetBoneParent(selectedBoneIndex, out var arm, out var parent, out var shoulders) ||
             !TryGetSelectedLayer(out var layer) || !TryGetLayerVertexData(layer, out var data) ||
-            data?.boneWeights == null || !TryBuildBoundaryLoopFromPairs(data.boundaryEdgePairs, data.vertices.Length, out var loop))
+            data?.boneWeights == null)
             return false;
         var draw = GetLayerVerticesForDraw(data);
         var joint = GetBoneBasePoint(arm);
+        if(!TryBuildBoundaryLoopNearPoint(data.boundaryEdgePairs,draw,joint,out var loop))return false;
         var direction = GetShoulderHelperDirection(shoulders.worldRotation * Vector3.right, arm.worldRotation * Vector3.right);
         if (!TryGetShoulderReferenceWidth(draw, data.boundaryEdgePairs, joint, arm.worldRotation * Vector3.right, out var a, out var b))
         { error = "The perpendicular through the arm base must intersect both contours."; return false; }
@@ -225,7 +226,7 @@ public partial class PsdLayerPreviewRenderer
         if (remove.Count > 0 && !TryDeleteVerticesAndRebuild(staged, remove))
         { message = "Could not rebuild the resampled shoulder contour."; return false; }
         foreach (int index in remove.OrderByDescending(index => index)) desired.RemoveAt(index);
-        if (!TryBuildBoundaryLoopFromPairs(staged.boundaryEdgePairs, staged.vertices.Length, out var smoothedLoop))
+        if (!TryBuildBoundaryLoopNearPoint(staged.boundaryEdgePairs, staged.vertices,ConvertPointToBaseDoc(data,plan.joint),out var smoothedLoop))
         { message = "Could not resolve the resampled shoulder contour."; return false; }
         var originalBones = CloneBones(bones);
         RegisterUndo("Apply Shoulder Contour Rig");
@@ -251,6 +252,8 @@ public partial class PsdLayerPreviewRenderer
 
             staged.skinMatrices = new Matrix4x4[staged.bindBoneInverseMatrices.Length];
             EnsureBoneWeightsArraySize(staged, staged.vertices.Length);
+            var originalWeights=staged.boneWeights.ToArray();
+            int torsoSlot=TryFindBoneIndexByName("spine",out var torsoBone)?FindSpriteBoneIndexForRendererBone(staged,torsoBone):-1;
             var boundary = BuildContourVertexMask(staged.boundaryEdgePairs, staged.vertices.Length);
             var changed = new bool[staged.vertices.Length];
             var helperTimes = new float[staged.vertices.Length];
@@ -275,8 +278,11 @@ public partial class PsdLayerPreviewRenderer
                 bool inHelper = boundary[i] && helperDistance <= 1.0001f;
                 if (!weld && !inSeam && !inHelper) continue;
 
-                staged.boneWeights[i] = EvaluateShoulderContourWeights(armWeight, helperDistance,
-                    null, shouldersSlot, armSlot, helperSlot);
+                // The shoulder reach may extend beyond a short upper arm.
+                // Fade back to the existing forearm/hand weights, never replace
+                // an entire distal segment with the upper-arm bone.
+                var baseline=torsoSlot>=0?RedistributeSoftContourWeight(staged.boneWeights[i],torsoSlot,armSlot,1f):staged.boneWeights[i];
+                staged.boneWeights[i] = BlendShoulderTransition(baseline,armWeight,shouldersSlot);
                 changed[i] = true;
                 helperTimes[i] = helperDistance;
                 inHelperRegion[i] = inHelper;
@@ -303,6 +309,7 @@ public partial class PsdLayerPreviewRenderer
             for (int i = 0; i < staged.vertices.Length; i++)
             {
                 if (!changed[i]) continue;
+                staged.boneWeights[i]=ConstrainShoulderWeights(originalWeights[i],staged.boneWeights[i],armSlot,shouldersSlot,helperSlot,torsoSlot);
                 if (!TryUnskinEditGeometryPoint(staged, desired[i], staged.boneWeights[i], out var basePoint))
                 { message = "The shoulder pose collapses the skinning transform."; return false; }
                 staged.vertices[i] = basePoint;
@@ -337,6 +344,25 @@ public partial class PsdLayerPreviewRenderer
             boneIndex1 = arm, weight1 = t * (1f - h),
             boneIndex2 = helper, weight2 = h
         };
+    }
+
+    internal static BoneWeight BlendShoulderTransition(BoneWeight original,float progress,int shoulders)
+    {
+        float t=Mathf.Clamp01(progress);
+        if(t>=1f)return original;
+        return BlendBoneWeights(original,t,BuildSingleBoneWeight(shoulders),1-t,default,0,null);
+    }
+
+    internal static BoneWeight ConstrainShoulderWeights(BoneWeight original,BoneWeight proposed,int arm,int shoulders,int helper,int torso=-1)
+    {
+        float available=GetSpriteBoneWeight(original,arm)+GetSpriteBoneWeight(original,shoulders)+GetSpriteBoneWeight(original,helper)+GetSpriteBoneWeight(original,torso);
+        float requested=GetSpriteBoneWeight(proposed,arm)+GetSpriteBoneWeight(proposed,shoulders)+GetSpriteBoneWeight(proposed,helper);
+        if(available<=.000001f||requested<=.000001f)return original;
+        var values=new Dictionary<int,float>();
+        Keep(original.boneIndex0,original.weight0);Keep(original.boneIndex1,original.weight1);Keep(original.boneIndex2,original.weight2);Keep(original.boneIndex3,original.weight3);
+        foreach(int slot in new[]{arm,shoulders,helper})AccumulateWeightChannel(values,slot,GetSpriteBoneWeight(proposed,slot)*available/requested);
+        return BuildVertexFixWeight(values);
+        void Keep(int slot,float amount){if(slot!=arm&&slot!=shoulders&&slot!=helper&&slot!=torso)AccumulateWeightChannel(values,slot,amount);}
     }
 
     internal static float EvaluateShoulderTransition(float progress, AnimationCurve curve) =>

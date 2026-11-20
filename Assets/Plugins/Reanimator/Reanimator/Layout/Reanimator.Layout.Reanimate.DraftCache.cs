@@ -61,6 +61,7 @@ public partial class Reanimator
             ["key"]=ReanimateOtherSpriteKey(layer),["name"]=layer.name,["index"]=layer.layerDataIndex }));
         Add("limbs",reanimateLimbDrafts);Add("others",reanimateOtherDrafts);
         Add("boobs",reanimateOtherBoobs);Add("belly",reanimateOtherBelly);
+        Add("ass",reanimateOtherAss);
         Add("shoulders",reanimateOtherShoulders);
         return root.ToString(Formatting.None);
         void Add<T>(string key,Dictionary<string,T> dictionary)
@@ -81,7 +82,7 @@ public partial class Reanimator
         if(!beforeRun && layerPreviewRenderer!=null && reanimateDraftCacheGeneration!=layerPreviewRenderer.DraftCacheGeneration)return;
         if((reanimateRunning && !beforeRun) || layerPreviewRenderer==null || string.IsNullOrEmpty(path) ||
             layerPreviewRenderer.IsPreviewCacheRefreshInProgress || !layerPreviewRenderer.IsPreviewCacheReady(path))return;
-        if(beforeRun && reanimateDraftCachePath==path && (reanimateDraftCacheRenderer!=layerPreviewRenderer || reanimateDraftCacheGeneration!=layerPreviewRenderer.DraftCacheGeneration))
+        if(beforeRun && (reanimateDraftCachePath!=path || reanimateDraftCacheRenderer!=layerPreviewRenderer || reanimateDraftCacheGeneration!=layerPreviewRenderer.DraftCacheGeneration))
             RestoreReanimateDraftCache(path);
         var file=ReanimateDraftFile(path);if(file==null)return;
         try
@@ -113,6 +114,7 @@ public partial class Reanimator
                 var serializer=JsonSerializer.Create(DraftJsonSettings);
                 Read("limbs",reanimateLimbDrafts);Read("others",reanimateOtherDrafts);
                 Read("boobs",reanimateOtherBoobs);Read("belly",reanimateOtherBelly);
+                Read("ass",reanimateOtherAss);
                 Read("shoulders",reanimateOtherShoulders);
                 // Canvas references must point into the recovered dictionaries,
                 // not the discarded objects from before the preview refresh.
@@ -156,7 +158,7 @@ public partial class Reanimator
                     region["projectorSources"]=new JArray(sources.Select(source=>Map((string)source)).Distinct(StringComparer.OrdinalIgnoreCase));
             root["others"]=remapped;
         }
-        foreach(var name in new[]{"boobs","belly","shoulders"})
+        foreach(var name in new[]{"boobs","belly","shoulders","ass"})
             if(root[name] is JArray flags)root[name]=new JArray(flags.Select(flag=>Map((string)flag)).Distinct(StringComparer.OrdinalIgnoreCase));
         string Map(string key)=>key!=null && map.TryGetValue(key,out var next)?next:key;
     }
@@ -174,12 +176,16 @@ public partial class PsdLayerPreviewRenderer
     // Only user inputs: never transient controls, generated geometry or live LayerInfo references.
     private static readonly string[] ReanimateDraftFields={"faceMouthContours","softContourBellyContour",
         "boobV2HasTargetA","boobV2HasTargetB","boobV2TargetADoc","boobV2TargetBDoc",
-        "boobV2RawContourADoc","boobV2RawContourBDoc","boobV2ContourADoc","boobV2ContourBDoc","boobV2LayerStableKey"};
+        "boobV2RawContourADoc","boobV2RawContourBDoc","boobV2ContourADoc","boobV2ContourBDoc","boobV2LayerStableKey","reanimateChestMode",
+        "assLeftContour","assRightContour","assLeftRaw","assRightRaw","assLayerStableKey","assDensity","assSmoothing"};
     internal JObject ExportReanimateDraftCache()
     {
         var json=new JObject();var serializer=JsonSerializer.Create(Reanimator.DraftJsonSettings);
         foreach(var name in ReanimateDraftFields)
-            json[name]=JToken.FromObject(GetType().GetField(name,System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic).GetValue(this),serializer);
+        {
+            var value=GetType().GetField(name,System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic).GetValue(this);
+            json[name]=value==null?JValue.CreateNull():JToken.FromObject(value,serializer);
+        }
         json["faceLayer"]=faceMouthLayer?.name;
         json["bellyParentRoot"]=SkeletronBellyParentRoot;
         json["shoulderGuide"]=JToken.FromObject(SkeletronShoulderGuideOffset,serializer);
@@ -189,6 +195,8 @@ public partial class PsdLayerPreviewRenderer
     internal void ImportReanimateDraftCache(JObject json)
     {
         if(json==null)return;
+        if(json["reanimateChestMode"]==null)reanimateChestMode=1;
+        if(json["assLeftContour"]==null)ClearAss(false);
         var serializer=JsonSerializer.Create(Reanimator.DraftJsonSettings);
         foreach(var name in ReanimateDraftFields)
         {

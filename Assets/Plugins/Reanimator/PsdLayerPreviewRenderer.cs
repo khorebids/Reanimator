@@ -643,14 +643,15 @@ public partial class PsdLayerPreviewRenderer : ISerializationCallbackReceiver
                 boobToolVersion = 1;
                 boobToolVersionInitialized = true;
             }
-            return Mathf.Clamp(boobToolVersion, 0, 2);
+            return Mathf.Clamp(boobToolVersion, 0, 3);
         }
         set
         {
-            var next = Mathf.Clamp(value, 0, 2);
+            var next = Mathf.Clamp(value, 0, 3);
             boobToolVersionInitialized = true;
             if (boobToolVersion == next)
                 return;
+            CancelAssStroke();
             if (GUIUtility.hotControl == boobControlId && boobControlId != 0)
                 GUIUtility.hotControl = 0;
             boobIsDragging = false;

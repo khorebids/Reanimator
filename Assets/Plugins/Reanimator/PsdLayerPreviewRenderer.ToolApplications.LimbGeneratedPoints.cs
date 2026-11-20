@@ -98,7 +98,7 @@ public partial class PsdLayerPreviewRenderer
         }
 
         var sourceVertexCount = sourceData.vertices.Length;
-        if (!TryBuildBoundaryLoopFromPairs(sourceData.boundaryEdgePairs, sourceVertexCount, out var sourceBoundaryLoop))
+        if (!TryBuildBoundaryLoopNearPoint(sourceData.boundaryEdgePairs,sourceData.vertices,ConvertPointToBaseDoc(sourceData,contourPointsDoc[0]),out var sourceBoundaryLoop))
             return false;
 
         var contourMask = BuildContourVertexMask(sourceData.boundaryEdgePairs, sourceVertexCount);
@@ -142,7 +142,14 @@ public partial class PsdLayerPreviewRenderer
         if (replacementPairs == null || replacementPairs.Length < 6)
             return false;
 
-        targetData.boundaryEdgePairs = replacementPairs;
+        var allPairs=new List<int>(replacementPairs);
+        foreach(var other in BuildAllBoundaryLoops(sourceData.boundaryEdgePairs,sourceVertexCount))
+        {
+            if(other.Count==sourceBoundaryLoop.Count && other[0]==sourceBoundaryLoop[0])continue;
+            var kept=BuildFilteredBoundaryLoop(other,removeMask,remap);
+            if(kept.Count>=3)allPairs.AddRange(BuildBoundaryPairsFromLoop(kept));
+        }
+        targetData.boundaryEdgePairs = allPairs.ToArray();
         return true;
     }
 

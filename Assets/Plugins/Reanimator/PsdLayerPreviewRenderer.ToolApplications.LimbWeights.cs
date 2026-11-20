@@ -356,17 +356,16 @@ public partial class PsdLayerPreviewRenderer
                 var range = distance >= 0f ? positiveRanges[bank] : negativeRanges[bank];
                 var parentWeight = ReanimatorLimbElbowAlgorithms.EvaluateAccordionParentWeight(
                     distance, range, positiveSideUsesParent, curve);
-                targetData.boneWeights[index] = BuildLimbTwoBoneWeight(
-                    parentSpriteBone, parentWeight, childSpriteBone, 1f - parentWeight);
+                targetData.boneWeights[index] = RedistributeSoftContourWeight(targetData.boneWeights[index],
+                    parentSpriteBone,childSpriteBone,1f-parentWeight);
             }
         }
 
         ApplyWeights(createdContourVertexIndices);
         ApplyWeights(createdShiftedVertexIndices);
 
-        var centerWeight = BuildLimbTwoBoneWeight(parentSpriteBone, 0.5f, childSpriteBone, 0.5f);
         foreach (var index in createdCenterVertexIndices)
-            targetData.boneWeights[index] = centerWeight;
+            targetData.boneWeights[index] = RedistributeSoftContourWeight(targetData.boneWeights[index],parentSpriteBone,childSpriteBone,.5f);
     }
 
     private bool TryResolveLimbTwoBoneSpriteIndices(
